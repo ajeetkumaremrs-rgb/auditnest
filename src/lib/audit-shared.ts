@@ -14,7 +14,7 @@ export interface Extracted {
   navLinks: string[];
   images: { total: number; missingAlt: number; samples: { src: string; alt: string | null }[] };
   links: { internal: number; external: number; samples: string[] };
-  structuredData: unknown[] & Record<string, unknown>[keyof never & never] extends never ? any[] : any[];
+  structuredData: any[];
   hasViewport: boolean;
   hasRobots: boolean;
   hasSitemap: boolean;
