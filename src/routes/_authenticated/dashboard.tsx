@@ -1,6 +1,7 @@
 import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
 import { useState } from "react";
-import { useMutation, useQuery, useQueryClient, useServerFn } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useServerFn } from "@tanstack/react-start";
 import { supabase } from "@/integrations/supabase/client";
 import { listAudits, runAudit } from "@/lib/audit.functions";
 import { Button } from "@/components/ui/button";
@@ -9,7 +10,6 @@ import { Card } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { toast } from "sonner";
 import { Sparkles, Loader2, ExternalLink, LogOut, Plus } from "lucide-react";
-import { useServerFn as useSF } from "@tanstack/react-start";
 
 export const Route = createFileRoute("/_authenticated/dashboard")({
   head: () => ({
