@@ -26,8 +26,8 @@ function Dashboard() {
   const qc = useQueryClient();
   const [url, setUrl] = useState("");
 
-  const listFn = useSF(listAudits);
-  const runFn = useSF(runAudit);
+  const listFn = useServerFn(listAudits);
+  const runFn = useServerFn(runAudit);
 
   const { data: audits, isLoading } = useQuery({
     queryKey: ["audits"],
