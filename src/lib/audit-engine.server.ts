@@ -112,7 +112,7 @@ export async function crawlSite(rawUrl: string): Promise<Extracted> {
     }
   });
 
-  const structuredData: unknown[] = [];
+  const structuredData: any[] = [];
   $('script[type="application/ld+json"]').each((_, el) => {
     try {
       structuredData.push(JSON.parse($(el).contents().text()));
