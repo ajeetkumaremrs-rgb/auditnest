@@ -3,6 +3,22 @@ import { Button } from "@/components/ui/button";
 import { Sparkles, Gauge, Search, Target, Shield, Smartphone, ArrowRight } from "lucide-react";
 
 export const Route = createFileRoute("/")({
+  head: () => ({
+    meta: [
+      { title: "ConvertIQ — AI Website Audits" },
+      {
+        name: "description",
+        content: "Run real AI website audits with live crawl, SEO, UX, accessibility, performance, and conversion insights.",
+      },
+      { property: "og:title", content: "ConvertIQ — AI Website Audits" },
+      {
+        property: "og:description",
+        content: "Analyze any public URL and get a prioritized AI report for SEO, UX, speed, accessibility, and conversions.",
+      },
+      { property: "og:type", content: "website" },
+      { name: "twitter:card", content: "summary_large_image" },
+    ],
+  }),
   component: Landing,
 });
 

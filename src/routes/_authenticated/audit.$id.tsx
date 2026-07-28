@@ -10,7 +10,14 @@ import { ArrowLeft, ExternalLink, Loader2, AlertTriangle } from "lucide-react";
 
 export const Route = createFileRoute("/_authenticated/audit/$id")({
   head: () => ({
-    meta: [{ title: "Audit report — ConvertIQ" }],
+    meta: [
+      { title: "Audit report — ConvertIQ" },
+      { name: "description", content: "Review a ConvertIQ AI website audit report with SEO, UX, performance, and conversion insights." },
+      { property: "og:title", content: "Audit report — ConvertIQ" },
+      { property: "og:description", content: "A detailed ConvertIQ website audit report for SEO, UX, performance, and conversion improvements." },
+      { property: "og:type", content: "website" },
+      { name: "twitter:card", content: "summary_large_image" },
+    ],
   }),
   component: AuditView,
 });

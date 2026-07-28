@@ -16,6 +16,10 @@ export const Route = createFileRoute("/_authenticated/dashboard")({
     meta: [
       { title: "Dashboard — ConvertIQ" },
       { name: "description", content: "Run new website audits and review your history." },
+      { property: "og:title", content: "Dashboard — ConvertIQ" },
+      { property: "og:description", content: "Run real AI website audits and review your ConvertIQ report history." },
+      { property: "og:type", content: "website" },
+      { name: "twitter:card", content: "summary_large_image" },
     ],
   }),
   component: Dashboard,

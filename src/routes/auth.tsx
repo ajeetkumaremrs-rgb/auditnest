@@ -14,6 +14,10 @@ export const Route = createFileRoute("/auth")({
     meta: [
       { title: "Sign in — ConvertIQ" },
       { name: "description", content: "Sign in to ConvertIQ to run AI-powered website audits." },
+      { property: "og:title", content: "Sign in — ConvertIQ" },
+      { property: "og:description", content: "Access ConvertIQ to run and review AI-powered website audits." },
+      { property: "og:type", content: "website" },
+      { name: "twitter:card", content: "summary_large_image" },
     ],
   }),
   component: AuthPage,
