@@ -3,11 +3,21 @@ import { createStart, createCsrfMiddleware, createMiddleware } from "@tanstack/r
 import { renderErrorPage } from "./lib/error-page";
 import { attachSupabaseAuth } from "@/integrations/supabase/auth-attacher";
 
-const errorMiddleware = createMiddleware().server(async ({ next }) => {
+const errorMiddleware = createMiddleware().server(async ({ next, context }) => {
   try {
     return await next();
   } catch (error) {
     if (error != null && typeof error === "object" && "statusCode" in error) {
+      throw error;
+    }
+    // Server functions have their own typed RPC error transport. Returning an
+    // HTML error page here hides the real exception from useServerFn callers.
+    if (
+      context != null &&
+      typeof context === "object" &&
+      "handlerType" in context &&
+      context.handlerType === "serverFn"
+    ) {
       throw error;
     }
     console.error(error);
