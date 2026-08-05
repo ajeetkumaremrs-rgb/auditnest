@@ -61,7 +61,7 @@ export async function generateReport(
   const key = process.env.LOVABLE_API_KEY;
   if (!key) throw new Error("Missing LOVABLE_API_KEY");
   const gateway = createLovableAiGatewayProvider(key);
-  const model = gateway("google/gemini-2.0-flash");
+  const model = gateway("google/gemini-2.5-flash");
 
   const compactExtracted = {
     ...extracted,
