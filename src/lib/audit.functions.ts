@@ -11,19 +11,31 @@ export const runAudit = createServerFn({ method: "POST" })
   .handler(async ({ data, context }) => {
     const url = normalizeUrl(data.url);
     const { supabase, userId } = context;
+    console.info("[audit] starting", { userId, url });
 
     const { data: inserted, error: insertErr } = await supabase
       .from("audits")
       .insert({ user_id: userId, url, status: "pending" })
       .select("id")
       .single();
-    if (insertErr || !inserted) throw new Error(insertErr?.message ?? "Failed to create audit");
+    if (insertErr || !inserted) {
+      console.error("[audit] database insert failed", insertErr);
+      throw new Error(insertErr?.message ?? "Failed to create audit");
+    }
     const auditId = inserted.id;
 
     try {
+      console.info("[audit] crawling", { auditId, url });
       const extracted = await crawlSite(url);
+      console.info("[audit] crawl complete", { auditId, finalUrl: extracted.finalUrl });
       const lighthouse = await runLighthouse(extracted.finalUrl);
+      console.info("[audit] PageSpeed complete", {
+        auditId,
+        performance: lighthouse.performance,
+        error: lighthouse.error,
+      });
       const report = await generateReport(extracted, lighthouse);
+      console.info("[audit] AI report complete", { auditId, score: report.overallScore });
 
       const { error: updErr } = await supabase
         .from("audits")
@@ -35,9 +47,11 @@ export const runAudit = createServerFn({ method: "POST" })
         })
         .eq("id", auditId);
       if (updErr) throw new Error(updErr.message);
+      console.info("[audit] completed", { auditId });
       return { id: auditId };
     } catch (e) {
       const message = e instanceof Error ? e.message : String(e);
+      console.error("[audit] failed", { auditId, message, error: e });
       await supabase.from("audits").update({ status: "failed", error: message }).eq("id", auditId);
       throw new Error(message);
     }

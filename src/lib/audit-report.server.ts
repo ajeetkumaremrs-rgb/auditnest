@@ -1,4 +1,4 @@
-import { generateText, NoObjectGeneratedError, Output } from "ai";
+import { generateText } from "ai";
 import { z } from "zod";
 
 import type { AuditReport, Extracted, LighthouseSummary } from "./audit-shared";
@@ -61,7 +61,7 @@ export async function generateReport(
   const key = process.env.LOVABLE_API_KEY;
   if (!key) throw new Error("Missing LOVABLE_API_KEY");
   const gateway = createLovableAiGatewayProvider(key);
-  const model = gateway("google/gemini-2.0-flash");
+  const model = gateway("google/gemini-2.5-flash");
 
   const compactExtracted = {
     ...extracted,
@@ -81,24 +81,30 @@ ${JSON.stringify(compactExtracted, null, 2)}
 LIGHTHOUSE (PageSpeed Insights, mobile):
 ${JSON.stringify(compactLighthouse, null, 2)}
 
-Produce a JSON audit that matches the requested schema. overallScore is a weighted score 0-100 combining clarity, CTA, trust, UX, mobile, SEO, accessibility, performance, and conversion. If a Lighthouse score is unavailable use null. For suggestions provide concrete rewrites (an actual headline, an actual CTA button label, etc.) or null when not applicable.`;
+Return ONLY valid JSON with this exact shape and no markdown fences:
+{
+  "overallScore": number,
+  "summary": string,
+  "homepageClarity": string,
+  "ctaAnalysis": { "findings": string[], "suggestedCta": string },
+  "trust": { "detected": string[], "missing": string[], "notes": string },
+  "ux": string[],
+  "mobile": string[],
+  "seo": { "metaTitle": string, "metaDescription": string, "headings": string, "imageAlt": string, "other": string[] },
+  "accessibility": string[],
+  "performance": { "performanceScore": number|null, "accessibilityScore": number|null, "seoScore": number|null, "bestPracticesScore": number|null, "notes": string },
+  "conversion": string[],
+  "recommendations": [{ "problem": string, "why": string, "fix": string, "impact": string, "priority": "high"|"medium"|"low" }],
+  "suggestions": { "headline": string|null, "cta": string|null, "hero": string|null, "pricing": string|null, "features": string|null, "testimonials": string|null }
+}
+overallScore is a weighted score 0-100 combining clarity, CTA, trust, UX, mobile, SEO, accessibility, performance, and conversion. If a Lighthouse score is unavailable use null. For suggestions provide concrete rewrites or null when not applicable.`;
 
+  const { text } = await generateText({ model, prompt });
+  const normalized = text.trim().replace(/^```(?:json)?\s*/i, "").replace(/\s*```$/, "");
   try {
-    const { output } = await generateText({
-      model,
-      output: Output.object({ schema: reportSchema }),
-      prompt,
-    });
-    return output as AuditReport;
-  } catch (err) {
-    if (NoObjectGeneratedError.isInstance(err)) {
-      try {
-        const parsed = JSON.parse(err.text ?? "{}");
-        return reportSchema.parse(parsed) as AuditReport;
-      } catch {
-        throw new Error("AI returned an unparseable report");
-      }
-    }
-    throw err;
+    return reportSchema.parse(JSON.parse(normalized)) as AuditReport;
+  } catch (error) {
+    console.error("[audit] invalid AI report", { error, preview: normalized.slice(0, 500) });
+    throw new Error("AI returned an invalid report");
   }
 }
