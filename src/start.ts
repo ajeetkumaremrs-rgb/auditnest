@@ -3,28 +3,14 @@ import { createStart, createCsrfMiddleware, createMiddleware } from "@tanstack/r
 import { renderErrorPage } from "./lib/error-page";
 import { attachSupabaseAuth } from "@/integrations/supabase/auth-attacher";
 
-const errorMiddleware = createMiddleware().server(async ({ next, context }) => {
+const errorMiddleware = createMiddleware().server(async ({ next }) => {
   try {
     return await next();
   } catch (error) {
-    if (error != null && typeof error === "object" && "statusCode" in error) {
-      throw error;
-    }
-    // Server functions have their own typed RPC error transport. Returning an
-    // HTML error page here hides the real exception from useServerFn callers.
-    if (
-      context != null &&
-      typeof context === "object" &&
-      "handlerType" in context &&
-      context.handlerType === "serverFn"
-    ) {
-      throw error;
-    }
     console.error(error);
-    return new Response(renderErrorPage(), {
-      status: 500,
-      headers: { "content-type": "text/html; charset=utf-8" },
-    });
+    // Preserve TanStack's route and server-function error transport. Replacing
+    // failures with an HTML response makes useServerFn surface no useful error.
+    throw error;
   }
 });
 
