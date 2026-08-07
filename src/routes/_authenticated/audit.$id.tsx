@@ -26,10 +26,22 @@ export const Route = createFileRoute("/_authenticated/audit/$id")({
 
 function AuditView() {
   const { id } = Route.useParams();
+  const navigate = useNavigate();
+  const qc = useQueryClient();
   const fn = useServerFn(getAudit);
+  const runFn = useServerFn(runAudit);
   const { data, isLoading, error } = useQuery({
     queryKey: ["audit", id],
     queryFn: () => fn({ data: { id } }),
+  });
+
+  const retry = useMutation({
+    mutationFn: (u: string) => runFn({ data: { url: u } }),
+    onSuccess: (res) => {
+      qc.invalidateQueries({ queryKey: ["audits"] });
+      navigate({ to: "/audit/$id", params: { id: res.id } });
+    },
+    onError: (e) => toast.error(e instanceof Error ? e.message : "Audit failed"),
   });
 
   if (isLoading) {
@@ -56,13 +68,19 @@ function AuditView() {
   return (
     <div className="min-h-screen bg-muted/30">
       <header className="border-b bg-background">
-        <div className="max-w-5xl mx-auto flex items-center justify-between px-4 h-16">
+        <div className="max-w-5xl mx-auto flex items-center justify-between gap-3 px-4 h-16">
           <Link to="/dashboard" className="inline-flex items-center gap-2 text-sm text-muted-foreground hover:text-foreground">
             <ArrowLeft className="h-4 w-4" /> Dashboard
           </Link>
-          <a href={url} target="_blank" rel="noreferrer" className="text-sm inline-flex items-center gap-1 text-muted-foreground hover:text-foreground">
-            {url} <ExternalLink className="h-3 w-3" />
-          </a>
+          <div className="flex items-center gap-3 min-w-0">
+            <a href={url} target="_blank" rel="noreferrer" className="text-sm truncate inline-flex items-center gap-1 text-muted-foreground hover:text-foreground">
+              {url} <ExternalLink className="h-3 w-3 shrink-0" />
+            </a>
+            <Button size="sm" variant="outline" disabled={retry.isPending} onClick={() => retry.mutate(url)}>
+              {retry.isPending ? <Loader2 className="h-4 w-4 animate-spin" /> : <RotateCw className="h-4 w-4" />}
+              <span className="ml-1 hidden sm:inline">Retry audit</span>
+            </Button>
+          </div>
         </div>
       </header>
 
@@ -83,6 +101,7 @@ function AuditView() {
       </main>
     </div>
   );
+
 }
 
 function ReportView({
