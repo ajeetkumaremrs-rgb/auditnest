@@ -94,15 +94,30 @@ function ReportView({
 }) {
   return (
     <>
+      {report.warnings?.length > 0 && (
+        <Card className="p-5 border-warning/50 bg-warning/5">
+          <div className="flex items-start gap-3">
+            <AlertTriangle className="h-5 w-5 text-warning-foreground shrink-0 mt-0.5" />
+            <ul className="text-sm space-y-1">
+              {report.warnings.map((w, i) => <li key={i}>{w}</li>)}
+            </ul>
+          </div>
+        </Card>
+      )}
+
       <Card className="p-8">
         <div className="flex flex-col md:flex-row gap-8 items-center">
           <ScoreRing value={report.overallScore} />
           <div className="flex-1">
             <h1 className="text-2xl font-semibold mb-2">Overall audit score</h1>
             <p className="text-muted-foreground">{report.summary}</p>
+            {report.scoreBasis && (
+              <p className="mt-3 text-xs text-muted-foreground">{report.scoreBasis}</p>
+            )}
           </div>
         </div>
       </Card>
+
 
       {lighthouse && (
         <Section title="Lighthouse performance">
