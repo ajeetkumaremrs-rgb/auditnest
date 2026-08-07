@@ -308,9 +308,22 @@ function MetricCard({ label, score }: { label: string; score: number | null }) {
   );
 }
 
-function ScoreRing({ value }: { value: number }) {
+function ScoreRing({ value }: { value: number | null }) {
+  if (value === null) {
+    return (
+      <div className="rounded-full h-40 w-40 grid place-items-center border-2 border-dashed border-muted-foreground/40 text-center px-4">
+        <div>
+          <div className="text-2xl font-semibold font-display text-muted-foreground">N/A</div>
+          <div className="text-[10px] uppercase tracking-wider text-muted-foreground">
+            not enough data
+          </div>
+        </div>
+      </div>
+    );
+  }
   const v = Math.max(0, Math.min(100, value));
   const color = v >= 80 ? "text-success" : v >= 50 ? "text-warning-foreground" : "text-destructive";
+
   return (
     <div
       className="score-ring rounded-full h-40 w-40 grid place-items-center"
