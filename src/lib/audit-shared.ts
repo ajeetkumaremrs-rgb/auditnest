@@ -1,6 +1,17 @@
+export interface HtmlEstimate {
+  seo: number | null;
+  accessibility: number | null;
+  bestPractices: number | null;
+}
+
 export interface Extracted {
   finalUrl: string;
   statusCode: number;
+  /** True when the origin served an anti-bot / challenge page instead of real content. */
+  blocked: boolean;
+  blockReason: string | null;
+  /** "static" = plain fetch, "rendered" = fetched through a JS-rendering proxy. */
+  renderMode: "static" | "rendered";
   title: string | null;
   metaDescription: string | null;
   canonical: string | null;
@@ -15,6 +26,8 @@ export interface Extracted {
   images: { total: number; missingAlt: number; samples: { src: string; alt: string | null }[] };
   links: { internal: number; external: number; samples: string[] };
   structuredData: any[];
+  openGraph: Record<string, string>;
+  twitter: Record<string, string>;
   hasViewport: boolean;
   hasRobots: boolean;
   hasSitemap: boolean;
@@ -22,6 +35,8 @@ export interface Extracted {
   sslValid: boolean;
   textSample: string;
   wordCount: number;
+  /** Deterministic scores derived from the HTML only. Null when the page was blocked. */
+  htmlEstimate: HtmlEstimate;
 }
 
 export interface LighthouseSummary {
@@ -41,6 +56,10 @@ export interface LighthouseSummary {
   strategy: "mobile" | "desktop";
   fetchTime: string | null;
   error?: string;
+  /** Number of retries performed before giving up / succeeding. */
+  attempts?: number;
+  /** True when served from the 10-minute cache. */
+  cached?: boolean;
 }
 
 export type Priority = "high" | "medium" | "low";
@@ -54,16 +73,21 @@ export interface Recommendation {
 }
 
 export interface Suggestions {
-  headline?: string;
-  cta?: string;
-  hero?: string;
-  pricing?: string;
-  features?: string;
-  testimonials?: string;
+  headline?: string | null;
+  cta?: string | null;
+  hero?: string | null;
+  pricing?: string | null;
+  features?: string | null;
+  testimonials?: string | null;
 }
 
 export interface AuditReport {
-  overallScore: number;
+  /** Null when there was not enough real data to score the page. Never a guessed number. */
+  overallScore: number | null;
+  /** Explains exactly which data the score was computed from. */
+  scoreBasis: string;
+  /** User-facing warnings, e.g. crawler blocked or PageSpeed rate limited. */
+  warnings: string[];
   summary: string;
   homepageClarity: string;
   ctaAnalysis: {
