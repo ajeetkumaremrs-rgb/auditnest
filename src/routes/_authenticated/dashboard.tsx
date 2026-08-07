@@ -98,11 +98,8 @@ function Dashboard() {
               {mutation.isPending ? <><Loader2 className="h-4 w-4 animate-spin" /> Auditing…</> : <><Plus className="h-4 w-4" /> Run audit</>}
             </Button>
           </form>
-          {mutation.isPending && (
-            <p className="mt-3 text-xs text-muted-foreground">
-              Crawling the page, running Lighthouse, and generating the AI report. This can take 30–90 seconds.
-            </p>
-          )}
+          {mutation.isPending && <AuditProgress />}
+
         </Card>
 
         <div className="mb-4 flex items-baseline justify-between">
