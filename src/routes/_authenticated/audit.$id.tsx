@@ -1,12 +1,14 @@
-import { createFileRoute, Link } from "@tanstack/react-router";
-import { useQuery } from "@tanstack/react-query";
+import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useServerFn } from "@tanstack/react-start";
-import { getAudit } from "@/lib/audit.functions";
+import { toast } from "sonner";
+import { getAudit, runAudit } from "@/lib/audit.functions";
 import type { AuditReport, Extracted, LighthouseSummary, Priority } from "@/lib/audit-shared";
 import { Card } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { ArrowLeft, ExternalLink, Loader2, AlertTriangle } from "lucide-react";
+import { ArrowLeft, ExternalLink, Loader2, AlertTriangle, RotateCw } from "lucide-react";
+
 
 export const Route = createFileRoute("/_authenticated/audit/$id")({
   head: () => ({
