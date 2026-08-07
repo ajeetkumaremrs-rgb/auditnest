@@ -1,5 +1,5 @@
 import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useServerFn } from "@tanstack/react-start";
 import { supabase } from "@/integrations/supabase/client";
@@ -9,7 +9,7 @@ import { Input } from "@/components/ui/input";
 import { Card } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { toast } from "sonner";
-import { Sparkles, Loader2, ExternalLink, LogOut, Plus } from "lucide-react";
+import { Sparkles, Loader2, ExternalLink, LogOut, Plus, Check } from "lucide-react";
 
 export const Route = createFileRoute("/_authenticated/dashboard")({
   head: () => ({
@@ -98,11 +98,8 @@ function Dashboard() {
               {mutation.isPending ? <><Loader2 className="h-4 w-4 animate-spin" /> Auditing…</> : <><Plus className="h-4 w-4" /> Run audit</>}
             </Button>
           </form>
-          {mutation.isPending && (
-            <p className="mt-3 text-xs text-muted-foreground">
-              Crawling the page, running Lighthouse, and generating the AI report. This can take 30–90 seconds.
-            </p>
-          )}
+          {mutation.isPending && <AuditProgress />}
+
         </Card>
 
         <div className="mb-4 flex items-baseline justify-between">
@@ -145,6 +142,43 @@ function Dashboard() {
     </div>
   );
 }
+
+const STEPS = [
+  { label: "Fetching page…", at: 0 },
+  { label: "Rendering page (if JS-protected)…", at: 8 },
+  { label: "Running Lighthouse (auto-retries on rate limits)…", at: 16 },
+  { label: "Generating AI report…", at: 45 },
+];
+
+function AuditProgress() {
+  const [elapsed, setElapsed] = useState(0);
+  useEffect(() => {
+    const t = setInterval(() => setElapsed((s) => s + 1), 1000);
+    return () => clearInterval(t);
+  }, []);
+  const activeIndex = STEPS.reduce((acc, s, i) => (elapsed >= s.at ? i : acc), 0);
+
+  return (
+    <div className="mt-5 space-y-2">
+      {STEPS.map((s, i) => (
+        <div key={s.label} className="flex items-center gap-2 text-sm">
+          {i < activeIndex ? (
+            <Check className="h-4 w-4 text-success" />
+          ) : i === activeIndex ? (
+            <Loader2 className="h-4 w-4 animate-spin text-primary" />
+          ) : (
+            <div className="h-4 w-4 rounded-full border border-muted-foreground/40" />
+          )}
+          <span className={i <= activeIndex ? "" : "text-muted-foreground"}>{s.label}</span>
+        </div>
+      ))}
+      <p className="pt-1 text-xs text-muted-foreground">
+        Elapsed {elapsed}s — PageSpeed retries automatically (2s, 5s, 10s) if Google rate-limits us.
+      </p>
+    </div>
+  );
+}
+
 
 function StatusBadge({ status }: { status: string }) {
   const map: Record<string, { label: string; className: string }> = {

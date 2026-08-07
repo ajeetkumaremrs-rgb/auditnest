@@ -1,12 +1,14 @@
-import { createFileRoute, Link } from "@tanstack/react-router";
-import { useQuery } from "@tanstack/react-query";
+import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useServerFn } from "@tanstack/react-start";
-import { getAudit } from "@/lib/audit.functions";
+import { toast } from "sonner";
+import { getAudit, runAudit } from "@/lib/audit.functions";
 import type { AuditReport, Extracted, LighthouseSummary, Priority } from "@/lib/audit-shared";
 import { Card } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { ArrowLeft, ExternalLink, Loader2, AlertTriangle } from "lucide-react";
+import { ArrowLeft, ExternalLink, Loader2, AlertTriangle, RotateCw } from "lucide-react";
+
 
 export const Route = createFileRoute("/_authenticated/audit/$id")({
   head: () => ({
@@ -24,10 +26,22 @@ export const Route = createFileRoute("/_authenticated/audit/$id")({
 
 function AuditView() {
   const { id } = Route.useParams();
+  const navigate = useNavigate();
+  const qc = useQueryClient();
   const fn = useServerFn(getAudit);
+  const runFn = useServerFn(runAudit);
   const { data, isLoading, error } = useQuery({
     queryKey: ["audit", id],
     queryFn: () => fn({ data: { id } }),
+  });
+
+  const retry = useMutation({
+    mutationFn: (u: string) => runFn({ data: { url: u } }),
+    onSuccess: (res) => {
+      qc.invalidateQueries({ queryKey: ["audits"] });
+      navigate({ to: "/audit/$id", params: { id: res.id } });
+    },
+    onError: (e) => toast.error(e instanceof Error ? e.message : "Audit failed"),
   });
 
   if (isLoading) {
@@ -54,13 +68,19 @@ function AuditView() {
   return (
     <div className="min-h-screen bg-muted/30">
       <header className="border-b bg-background">
-        <div className="max-w-5xl mx-auto flex items-center justify-between px-4 h-16">
+        <div className="max-w-5xl mx-auto flex items-center justify-between gap-3 px-4 h-16">
           <Link to="/dashboard" className="inline-flex items-center gap-2 text-sm text-muted-foreground hover:text-foreground">
             <ArrowLeft className="h-4 w-4" /> Dashboard
           </Link>
-          <a href={url} target="_blank" rel="noreferrer" className="text-sm inline-flex items-center gap-1 text-muted-foreground hover:text-foreground">
-            {url} <ExternalLink className="h-3 w-3" />
-          </a>
+          <div className="flex items-center gap-3 min-w-0">
+            <a href={url} target="_blank" rel="noreferrer" className="text-sm truncate inline-flex items-center gap-1 text-muted-foreground hover:text-foreground">
+              {url} <ExternalLink className="h-3 w-3 shrink-0" />
+            </a>
+            <Button size="sm" variant="outline" disabled={retry.isPending} onClick={() => retry.mutate(url)}>
+              {retry.isPending ? <Loader2 className="h-4 w-4 animate-spin" /> : <RotateCw className="h-4 w-4" />}
+              <span className="ml-1 hidden sm:inline">Retry audit</span>
+            </Button>
+          </div>
         </div>
       </header>
 
@@ -81,6 +101,7 @@ function AuditView() {
       </main>
     </div>
   );
+
 }
 
 function ReportView({
@@ -94,15 +115,30 @@ function ReportView({
 }) {
   return (
     <>
+      {report.warnings?.length > 0 && (
+        <Card className="p-5 border-warning/50 bg-warning/5">
+          <div className="flex items-start gap-3">
+            <AlertTriangle className="h-5 w-5 text-warning-foreground shrink-0 mt-0.5" />
+            <ul className="text-sm space-y-1">
+              {report.warnings.map((w, i) => <li key={i}>{w}</li>)}
+            </ul>
+          </div>
+        </Card>
+      )}
+
       <Card className="p-8">
         <div className="flex flex-col md:flex-row gap-8 items-center">
           <ScoreRing value={report.overallScore} />
           <div className="flex-1">
             <h1 className="text-2xl font-semibold mb-2">Overall audit score</h1>
             <p className="text-muted-foreground">{report.summary}</p>
+            {report.scoreBasis && (
+              <p className="mt-3 text-xs text-muted-foreground">{report.scoreBasis}</p>
+            )}
           </div>
         </div>
       </Card>
+
 
       {lighthouse && (
         <Section title="Lighthouse performance">
@@ -293,9 +329,22 @@ function MetricCard({ label, score }: { label: string; score: number | null }) {
   );
 }
 
-function ScoreRing({ value }: { value: number }) {
+function ScoreRing({ value }: { value: number | null }) {
+  if (value === null) {
+    return (
+      <div className="rounded-full h-40 w-40 grid place-items-center border-2 border-dashed border-muted-foreground/40 text-center px-4">
+        <div>
+          <div className="text-2xl font-semibold font-display text-muted-foreground">N/A</div>
+          <div className="text-[10px] uppercase tracking-wider text-muted-foreground">
+            not enough data
+          </div>
+        </div>
+      </div>
+    );
+  }
   const v = Math.max(0, Math.min(100, value));
   const color = v >= 80 ? "text-success" : v >= 50 ? "text-warning-foreground" : "text-destructive";
+
   return (
     <div
       className="score-ring rounded-full h-40 w-40 grid place-items-center"

@@ -3,9 +3,9 @@ import { z } from "zod";
 
 import type { AuditReport, Extracted, LighthouseSummary } from "./audit-shared";
 import { createLovableAiGatewayProvider } from "./ai-gateway.server";
+import { computeOverallScore } from "./audit-engine.server";
 
-const reportSchema = z.object({
-  overallScore: z.number(),
+const aiSchema = z.object({
   summary: z.string(),
   homepageClarity: z.string(),
   ctaAnalysis: z.object({
@@ -27,13 +27,7 @@ const reportSchema = z.object({
     other: z.array(z.string()),
   }),
   accessibility: z.array(z.string()),
-  performance: z.object({
-    performanceScore: z.number().nullable(),
-    accessibilityScore: z.number().nullable(),
-    seoScore: z.number().nullable(),
-    bestPracticesScore: z.number().nullable(),
-    notes: z.string(),
-  }),
+  performanceNotes: z.string(),
   conversion: z.array(z.string()),
   recommendations: z.array(
     z.object({
@@ -54,10 +48,70 @@ const reportSchema = z.object({
   }),
 });
 
+function buildWarnings(extracted: Extracted, lighthouse: LighthouseSummary): string[] {
+  const warnings: string[] = [];
+  if (extracted.blocked) {
+    warnings.push("This website blocks automated crawlers. Results may be incomplete.");
+    if (extracted.blockReason) warnings.push(extracted.blockReason);
+  }
+  if (extracted.renderMode === "rendered") {
+    warnings.push("The page required JavaScript rendering; content was captured via a headless renderer.");
+  }
+  if (lighthouse.error) {
+    warnings.push(
+      lighthouse.error.toLowerCase().includes("rate limit")
+        ? "Google PageSpeed rate limit exceeded. HTML analysis is still available."
+        : `Lighthouse unavailable: ${lighthouse.error}`,
+    );
+  }
+  return warnings;
+}
+
+/** Report used when the site blocked us — no fabricated SEO/UX/CTA analysis. */
+function blockedReport(extracted: Extracted, lighthouse: LighthouseSummary): AuditReport {
+  const { score, basis } = computeOverallScore(extracted, lighthouse);
+  const na = "Not analysed — the site blocked automated access.";
+  return {
+    overallScore: score,
+    scoreBasis: basis,
+    warnings: buildWarnings(extracted, lighthouse),
+    summary:
+      `We could not read the real content of ${extracted.finalUrl}. ${extracted.blockReason ?? "The origin served an anti-bot page."} ` +
+      "No SEO, UX or conversion scores were generated, because any result would be misleading.",
+    homepageClarity: na,
+    ctaAnalysis: { findings: [], suggestedCta: na },
+    trust: { detected: [], missing: [], notes: na },
+    ux: [],
+    mobile: [],
+    seo: { metaTitle: na, metaDescription: na, headings: na, imageAlt: na, other: [] },
+    accessibility: [],
+    performance: {
+      performanceScore: lighthouse.performance,
+      accessibilityScore: lighthouse.accessibility,
+      seoScore: lighthouse.seo,
+      bestPracticesScore: lighthouse.bestPractices,
+      notes: lighthouse.error ?? "Lighthouse data unavailable for a blocked page.",
+    },
+    conversion: [],
+    recommendations: [
+      {
+        problem: "The site blocks automated crawlers",
+        why: "Bot protection prevents audit tools — and some search/AI crawlers — from reading the page.",
+        fix: "Allow reputable crawlers in your WAF/bot-protection rules, or run the audit from an allow-listed IP.",
+        impact: "Enables a complete, accurate audit and avoids blocking legitimate indexing bots.",
+        priority: "high",
+      },
+    ],
+    suggestions: {},
+  };
+}
+
 export async function generateReport(
   extracted: Extracted,
   lighthouse: LighthouseSummary,
 ): Promise<AuditReport> {
+  if (extracted.blocked) return blockedReport(extracted, lighthouse);
+
   const key = process.env.LOVABLE_API_KEY;
   if (!key) throw new Error("Missing LOVABLE_API_KEY");
   const gateway = createLovableAiGatewayProvider(key);
@@ -71,9 +125,11 @@ export async function generateReport(
   };
   const compactLighthouse = { ...lighthouse, screenshot: null };
 
-  const prompt = `You are a senior conversion + SEO strategist auditing a real website. Use ONLY the extracted data below — do not invent facts. Be specific, quote elements you saw (headings, CTA text) where relevant. Keep each list under 8 items. Priorities must reflect real business impact.
+  const prompt = `You are a senior conversion + SEO strategist auditing a real website. Use ONLY the extracted data below — never invent facts, metrics or numbers. If a signal is missing from the data, say it was not measured instead of guessing. Be specific and quote elements you saw (headings, CTA text). Keep each list under 8 items.
 
 URL: ${extracted.finalUrl}
+Content capture mode: ${extracted.renderMode === "rendered" ? "JavaScript-rendered" : "static HTML"}
+Lighthouse available: ${lighthouse.error ? `NO — ${lighthouse.error}` : "yes"}
 
 EXTRACTED PAGE DATA (JSON):
 ${JSON.stringify(compactExtracted, null, 2)}
@@ -83,7 +139,6 @@ ${JSON.stringify(compactLighthouse, null, 2)}
 
 Return ONLY valid JSON with this exact shape and no markdown fences:
 {
-  "overallScore": number,
   "summary": string,
   "homepageClarity": string,
   "ctaAnalysis": { "findings": string[], "suggestedCta": string },
@@ -92,19 +147,48 @@ Return ONLY valid JSON with this exact shape and no markdown fences:
   "mobile": string[],
   "seo": { "metaTitle": string, "metaDescription": string, "headings": string, "imageAlt": string, "other": string[] },
   "accessibility": string[],
-  "performance": { "performanceScore": number|null, "accessibilityScore": number|null, "seoScore": number|null, "bestPracticesScore": number|null, "notes": string },
+  "performanceNotes": string,
   "conversion": string[],
   "recommendations": [{ "problem": string, "why": string, "fix": string, "impact": string, "priority": "high"|"medium"|"low" }],
   "suggestions": { "headline": string|null, "cta": string|null, "hero": string|null, "pricing": string|null, "features": string|null, "testimonials": string|null }
 }
-overallScore is a weighted score 0-100 combining clarity, CTA, trust, UX, mobile, SEO, accessibility, performance, and conversion. If a Lighthouse score is unavailable use null. For suggestions provide concrete rewrites or null when not applicable.`;
+Do not output any numeric score — scores are computed separately from measured data. If Lighthouse is unavailable, performanceNotes must say so plainly rather than estimating speed.`;
 
   const { text } = await generateText({ model, prompt });
   const normalized = text.trim().replace(/^```(?:json)?\s*/i, "").replace(/\s*```$/, "");
+
+  let ai: z.infer<typeof aiSchema>;
   try {
-    return reportSchema.parse(JSON.parse(normalized)) as AuditReport;
+    ai = aiSchema.parse(JSON.parse(normalized));
   } catch (error) {
     console.error("[audit] invalid AI report", { error, preview: normalized.slice(0, 500) });
     throw new Error("AI returned an invalid report");
   }
+
+  const { score, basis } = computeOverallScore(extracted, lighthouse);
+
+  return {
+    overallScore: score,
+    scoreBasis: basis,
+    warnings: buildWarnings(extracted, lighthouse),
+    summary: ai.summary,
+    homepageClarity: ai.homepageClarity,
+    ctaAnalysis: ai.ctaAnalysis,
+    trust: ai.trust,
+    ux: ai.ux,
+    mobile: ai.mobile,
+    seo: ai.seo,
+    accessibility: ai.accessibility,
+    performance: {
+      // Never fabricated: measured Lighthouse first, deterministic HTML estimate as fallback.
+      performanceScore: lighthouse.performance,
+      accessibilityScore: lighthouse.accessibility ?? extracted.htmlEstimate.accessibility,
+      seoScore: lighthouse.seo ?? extracted.htmlEstimate.seo,
+      bestPracticesScore: lighthouse.bestPractices ?? extracted.htmlEstimate.bestPractices,
+      notes: ai.performanceNotes,
+    },
+    conversion: ai.conversion,
+    recommendations: ai.recommendations,
+    suggestions: ai.suggestions,
+  };
 }

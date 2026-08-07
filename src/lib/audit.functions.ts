@@ -25,17 +25,22 @@ export const runAudit = createServerFn({ method: "POST" })
     const auditId = inserted.id;
 
     try {
-      console.info("[audit] crawling", { auditId, url });
-      const extracted = await crawlSite(url);
-      console.info("[audit] crawl complete", { auditId, finalUrl: extracted.finalUrl });
-      const lighthouse = await runLighthouse(extracted.finalUrl);
-      console.info("[audit] PageSpeed complete", {
+      console.info("[audit] crawling + PageSpeed (parallel)", { auditId, url });
+      // HTML analysis and Lighthouse run in parallel; Lighthouse failure never
+      // aborts the audit — HTML analysis still produces a real report.
+      const [extracted, lighthouse] = await Promise.all([crawlSite(url), runLighthouse(url)]);
+      console.info("[audit] collection complete", {
         auditId,
+        finalUrl: extracted.finalUrl,
+        blocked: extracted.blocked,
+        renderMode: extracted.renderMode,
         performance: lighthouse.performance,
-        error: lighthouse.error,
+        lighthouseError: lighthouse.error,
+        attempts: lighthouse.attempts,
       });
       const report = await generateReport(extracted, lighthouse);
       console.info("[audit] AI report complete", { auditId, score: report.overallScore });
+
 
       const { error: updErr } = await supabase
         .from("audits")
