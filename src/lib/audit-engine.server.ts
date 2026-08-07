@@ -1,7 +1,24 @@
-import type { Extracted, LighthouseSummary } from "./audit-shared";
+import type { Extracted, HtmlEstimate, LighthouseSummary } from "./audit-shared";
 
 const UA =
-  "Mozilla/5.0 (compatible; ConvertIQBot/1.0; +https://convertiq.app) AppleWebKit/537.36";
+  "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36";
+
+const BROWSER_HEADERS: Record<string, string> = {
+  "User-Agent": UA,
+  Accept:
+    "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8",
+  "Accept-Language": "en-US,en;q=0.9",
+  "Accept-Encoding": "gzip, deflate, br",
+  "Cache-Control": "no-cache",
+  Pragma: "no-cache",
+  "Upgrade-Insecure-Requests": "1",
+  "Sec-Fetch-Dest": "document",
+  "Sec-Fetch-Mode": "navigate",
+  "Sec-Fetch-Site": "none",
+  "Sec-Fetch-User": "?1",
+};
+
+const FETCH_TIMEOUT_MS = 30000;
 
 export function normalizeUrl(input: string): string {
   let u = input.trim();
@@ -52,9 +69,7 @@ function compactText(value: string): string {
 
 function parseAttrs(tagSource: string): Record<string, string> {
   const attrs: Record<string, string> = {};
-  const source = tagSource
-    .replace(/^<\s*\/?\s*[\w:-]+/i, "")
-    .replace(/\/?>\s*$/i, "");
+  const source = tagSource.replace(/^<\s*\/?\s*[\w:-]+/i, "").replace(/\/?>\s*$/i, "");
   const attrRe = /([\w:-]+)(?:\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s"'=<>`]+)))?/g;
   let match: RegExpExecArray | null;
   while ((match = attrRe.exec(source))) {
@@ -103,23 +118,177 @@ function firstLinkHref(html: string, relValue: string): string | null {
   return null;
 }
 
-export async function crawlSite(rawUrl: string): Promise<Extracted> {
-  const url = normalizeUrl(rawUrl);
+function collectPrefixedMeta(html: string, prefix: string): Record<string, string> {
+  const out: Record<string, string> = {};
+  for (const tag of findTags(html, "meta")) {
+    const key = (tag.attrs.property || tag.attrs.name || "").toLowerCase();
+    if (key.startsWith(prefix) && tag.attrs.content) out[key] = tag.attrs.content.trim();
+  }
+  return out;
+}
+
+/* ------------------------------------------------------------------ */
+/* Anti-bot detection + JS rendering fallback                          */
+/* ------------------------------------------------------------------ */
+
+const CHALLENGE_MARKERS = [
+  "enable javascript and cookies to continue",
+  "just a moment...",
+  "checking your browser before accessing",
+  "verify you are human",
+  "attention required! | cloudflare",
+  "please enable js and disable any ad blocker",
+  "ddos protection by cloudflare",
+  "access denied",
+  "request unsuccessful. incapsula",
+  "pardon our interruption",
+];
+
+function detectChallenge(status: number, html: string): string | null {
+  const lower = html.slice(0, 20000).toLowerCase();
+  for (const marker of CHALLENGE_MARKERS) {
+    if (lower.includes(marker)) return "Anti-bot challenge page detected";
+  }
+  if (status === 403) return "Origin returned HTTP 403 (crawler blocked)";
+  if (status === 429) return "Origin returned HTTP 429 (rate limited)";
+  if (status === 503 && compactText(html).length < 800) return "Origin returned HTTP 503 challenge";
+  if (status >= 400) return `Origin returned HTTP ${status}`;
+  if (compactText(html).length < 200) return "Origin returned an empty or JS-only shell";
+  return null;
+}
+
+async function fetchWithBrowserHeaders(url: string, referer?: string): Promise<{ res: Response; html: string }> {
   const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), 20000);
-  let res: Response;
+  const timeout = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS);
   try {
-    res = await fetch(url, {
-      headers: { "User-Agent": UA, Accept: "text/html,*/*;q=0.8" },
+    const res = await fetch(url, {
+      headers: referer ? { ...BROWSER_HEADERS, Referer: referer } : BROWSER_HEADERS,
       redirect: "follow",
       signal: controller.signal,
     });
+    // The runtime transparently handles gzip/deflate/br content-encoding.
+    const html = await res.text();
+    return { res, html };
+  } catch (e) {
+    if (e instanceof Error && e.name === "AbortError") {
+      throw new Error(`Request timed out after ${FETCH_TIMEOUT_MS / 1000}s: ${url}`);
+    }
+    throw new Error(
+      `Network error fetching ${url}: ${e instanceof Error ? e.message : String(e)}`,
+    );
   } finally {
     clearTimeout(timeout);
   }
+}
 
+/**
+ * JS-rendering fallback. Playwright/Puppeteer cannot run in this serverless
+ * runtime (no native browser binary), so we delegate rendering to a headless
+ * rendering proxy that executes JS and returns the final HTML.
+ */
+async function fetchRendered(url: string): Promise<string | null> {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS);
+  try {
+    const token = process.env.JINA_API_KEY;
+    const res = await fetch(`https://r.jina.ai/${url}`, {
+      headers: {
+        "x-return-format": "html",
+        "x-timeout": "25",
+        Accept: "text/html,*/*;q=0.8",
+        ...(token ? { Authorization: `Bearer ${token}` } : {}),
+      },
+      signal: controller.signal,
+    });
+    if (!res.ok) return null;
+    const html = await res.text();
+    if (!html || compactText(html).length < 200) return null;
+    return html;
+  } catch {
+    return null;
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
+/* ------------------------------------------------------------------ */
+/* HTML-only deterministic scoring                                     */
+/* ------------------------------------------------------------------ */
+
+function clamp(n: number): number {
+  return Math.max(0, Math.min(100, Math.round(n)));
+}
+
+function estimateFromHtml(e: Omit<Extracted, "htmlEstimate">): HtmlEstimate {
+  if (e.blocked) return { seo: null, accessibility: null, bestPractices: null };
+
+  // SEO
+  let seo = 100;
+  const titleLen = e.title?.length ?? 0;
+  if (!titleLen) seo -= 20;
+  else if (titleLen < 20 || titleLen > 65) seo -= 8;
+  const descLen = e.metaDescription?.length ?? 0;
+  if (!descLen) seo -= 15;
+  else if (descLen < 70 || descLen > 165) seo -= 6;
+  if (e.h1Count === 0) seo -= 12;
+  else if (e.h1Count > 1) seo -= 6;
+  if (!e.canonical) seo -= 6;
+  if (!e.hasViewport) seo -= 10;
+  if (!e.hasRobots) seo -= 5;
+  if (!e.hasSitemap) seo -= 5;
+  if (Object.keys(e.openGraph).length === 0) seo -= 6;
+  if (e.structuredData.length === 0) seo -= 6;
+  if (e.wordCount < 200) seo -= 10;
+
+  // Accessibility
+  let accessibility = 100;
+  if (!e.language) accessibility -= 12;
+  if (!e.hasViewport) accessibility -= 8;
+  if (e.images.total > 0) accessibility -= Math.min(35, (e.images.missingAlt / e.images.total) * 45);
+  if (e.h1Count === 0) accessibility -= 10;
+  const emptyButtons = e.buttons.filter((b) => !b.trim()).length;
+  if (emptyButtons) accessibility -= Math.min(10, emptyButtons * 2);
+
+  // Best practices
+  let bestPractices = 100;
+  if (!e.sslValid) bestPractices -= 35;
+  const presentHeaders = Object.values(e.securityHeaders).filter(Boolean).length;
+  bestPractices -= (6 - presentHeaders) * 7;
+  if (e.statusCode >= 300) bestPractices -= 10;
+
+  return {
+    seo: clamp(seo),
+    accessibility: clamp(accessibility),
+    bestPractices: clamp(bestPractices),
+  };
+}
+
+/* ------------------------------------------------------------------ */
+/* Crawl                                                               */
+/* ------------------------------------------------------------------ */
+
+export async function crawlSite(rawUrl: string): Promise<Extracted> {
+  const url = normalizeUrl(rawUrl);
+
+  const { res, html: initialHtml } = await fetchWithBrowserHeaders(url);
+  let html = initialHtml;
+  let renderMode: "static" | "rendered" = "static";
+  let blockReason = detectChallenge(res.status, html);
+
+  if (blockReason) {
+    const rendered = await fetchRendered(url);
+    if (rendered) {
+      const renderedBlock = detectChallenge(200, rendered);
+      if (!renderedBlock) {
+        html = rendered;
+        renderMode = "rendered";
+        blockReason = null;
+      }
+    }
+  }
+
+  const blocked = blockReason !== null;
   const finalUrl = res.url || url;
-  const html = await res.text();
   const origin = new URL(finalUrl).origin;
 
   const abs = (href: string | undefined | null): string | null => {
@@ -145,7 +314,8 @@ export async function crawlSite(rawUrl: string): Promise<Extracted> {
   const buttons = Array.from(new Set([...buttonTexts, ...roleButtonTexts]));
 
   const ctas: string[] = [];
-  const ctaWords = /\b(sign up|get started|start|try|buy|book|download|subscribe|contact|demo|free trial|learn more|join)\b/i;
+  const ctaWords =
+    /\b(sign up|get started|start|try|buy|book|download|subscribe|contact|demo|free trial|learn more|join)\b/i;
   [...findElements(html, "a"), ...findElements(html, "button")].forEach((el) => {
     const t = compactText(el.inner);
     if (t && ctaWords.test(t)) ctas.push(t.slice(0, 80));
@@ -195,20 +365,22 @@ export async function crawlSite(rawUrl: string): Promise<Extracted> {
   });
 
   const structuredData: any[] = [];
-  findElements(html, "script").filter((el) => attrEquals(el.attrs, "type", "application/ld+json")).forEach((el) => {
-    try {
-      structuredData.push(JSON.parse(el.inner.trim()));
-    } catch {
-      /* noop */
-    }
-  });
+  findElements(html, "script")
+    .filter((el) => attrEquals(el.attrs, "type", "application/ld+json"))
+    .forEach((el) => {
+      try {
+        structuredData.push(JSON.parse(el.inner.trim()));
+      } catch {
+        /* noop */
+      }
+    });
 
   const securityHeaders: Record<string, string | null> = {};
   for (const h of SECURITY_HEADERS) securityHeaders[h] = res.headers.get(h);
 
   const [robotsRes, sitemapRes] = await Promise.allSettled([
-    fetch(new URL("/robots.txt", origin).toString(), { headers: { "User-Agent": UA } }),
-    fetch(new URL("/sitemap.xml", origin).toString(), { headers: { "User-Agent": UA } }),
+    fetch(new URL("/robots.txt", origin).toString(), { headers: BROWSER_HEADERS }),
+    fetch(new URL("/sitemap.xml", origin).toString(), { headers: BROWSER_HEADERS }),
   ]);
   const hasRobots = robotsRes.status === "fulfilled" && robotsRes.value.ok;
   const hasSitemap = sitemapRes.status === "fulfilled" && sitemapRes.value.ok;
@@ -220,11 +392,15 @@ export async function crawlSite(rawUrl: string): Promise<Extracted> {
   const canonicalHref = firstLinkHref(html, "canonical");
   const iconHref = firstLinkHref(html, "icon") || firstLinkHref(html, "shortcut icon");
 
-  return {
+  const base: Omit<Extracted, "htmlEstimate"> = {
     finalUrl,
     statusCode: res.status,
+    blocked,
+    blockReason,
+    renderMode,
     title,
-    metaDescription: firstMetaContent(html, "name", "description"),
+    metaDescription:
+      firstMetaContent(html, "name", "description") ?? firstMetaContent(html, "property", "og:description"),
     canonical: canonicalHref ? abs(canonicalHref) : null,
     favicon: abs(iconHref || "/favicon.ico"),
     language: findTags(html, "html")[0]?.attrs.lang || null,
@@ -237,6 +413,8 @@ export async function crawlSite(rawUrl: string): Promise<Extracted> {
     images: { total: imgs.length, missingAlt, samples: imageSamples },
     links: { internal, external, samples: linkSamples },
     structuredData: structuredData.slice(0, 5),
+    openGraph: collectPrefixedMeta(html, "og:"),
+    twitter: collectPrefixedMeta(html, "twitter:"),
     hasViewport: findTags(html, "meta").some((tag) => attrEquals(tag.attrs, "name", "viewport")),
     hasRobots,
     hasSitemap,
@@ -245,55 +423,100 @@ export async function crawlSite(rawUrl: string): Promise<Extracted> {
     textSample,
     wordCount,
   };
+
+  return { ...base, htmlEstimate: estimateFromHtml(base) };
 }
 
+/* ------------------------------------------------------------------ */
+/* PageSpeed Insights with key support, backoff + cache                */
+/* ------------------------------------------------------------------ */
+
+const PSI_CACHE_TTL_MS = 10 * 60 * 1000;
+const psiCache = new Map<string, { at: number; value: LighthouseSummary }>();
+const RETRY_DELAYS_MS = [2000, 5000, 10000];
+
+const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+
 export async function runLighthouse(url: string): Promise<LighthouseSummary> {
+  const apiKey = process.env.PAGESPEED_API_KEY || process.env.GOOGLE_PAGESPEED_API_KEY || "";
+  const cacheKey = `mobile:${url}`;
+  const hit = psiCache.get(cacheKey);
+  if (hit && Date.now() - hit.at < PSI_CACHE_TTL_MS) {
+    return { ...hit.value, cached: true };
+  }
+
   const endpoint = new URL("https://www.googleapis.com/pagespeedonline/v5/runPagespeed");
   endpoint.searchParams.set("url", url);
   endpoint.searchParams.set("strategy", "mobile");
   for (const c of ["performance", "accessibility", "best-practices", "seo"]) {
     endpoint.searchParams.append("category", c);
   }
-  const apiKey = process.env.PAGESPEED_API_KEY;
   if (apiKey) endpoint.searchParams.set("key", apiKey);
 
-  const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), 55000);
-  try {
-    const res = await fetch(endpoint, { signal: controller.signal });
-    if (!res.ok) {
-      return emptyLighthouse(`PageSpeed API returned ${res.status}`);
+  let lastError = "PageSpeed request failed";
+
+  for (let attempt = 0; attempt <= RETRY_DELAYS_MS.length; attempt++) {
+    if (attempt > 0) await sleep(RETRY_DELAYS_MS[attempt - 1]);
+
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 55000);
+    try {
+      const res = await fetch(endpoint, { signal: controller.signal });
+      if (res.status === 429 || res.status >= 500) {
+        lastError =
+          res.status === 429
+            ? apiKey
+              ? "Google PageSpeed rate limit exceeded."
+              : "Google PageSpeed rate limit exceeded (keyless mode). Add PAGESPEED_API_KEY for a higher quota."
+            : `PageSpeed API returned ${res.status}`;
+        continue;
+      }
+      if (!res.ok) {
+        const detail = await res.text().catch(() => "");
+        return empty(`PageSpeed API returned ${res.status}${detail ? `: ${detail.slice(0, 200)}` : ""}`, attempt);
+      }
+
+      const data: any = await res.json();
+      const cats = data.lighthouseResult?.categories ?? {};
+      const audits = data.lighthouseResult?.audits ?? {};
+      const score = (k: string) =>
+        typeof cats[k]?.score === "number" ? Math.round(cats[k].score * 100) : null;
+      const value: LighthouseSummary = {
+        performance: score("performance"),
+        accessibility: score("accessibility"),
+        bestPractices: score("best-practices"),
+        seo: score("seo"),
+        metrics: {
+          fcp: audits["first-contentful-paint"]?.displayValue ?? null,
+          lcp: audits["largest-contentful-paint"]?.displayValue ?? null,
+          cls: audits["cumulative-layout-shift"]?.displayValue ?? null,
+          tbt: audits["total-blocking-time"]?.displayValue ?? null,
+          tti: audits["interactive"]?.displayValue ?? null,
+          si: audits["speed-index"]?.displayValue ?? null,
+        },
+        screenshot: audits["final-screenshot"]?.details?.data ?? null,
+        strategy: "mobile",
+        fetchTime: data.lighthouseResult?.fetchTime ?? null,
+        attempts: attempt + 1,
+      };
+      psiCache.set(cacheKey, { at: Date.now(), value });
+      return value;
+    } catch (e) {
+      lastError =
+        e instanceof Error && e.name === "AbortError"
+          ? "PageSpeed request timed out"
+          : e instanceof Error
+            ? e.message
+            : String(e);
+    } finally {
+      clearTimeout(timeout);
     }
-    const data: any = await res.json();
-    const cats = data.lighthouseResult?.categories ?? {};
-    const audits = data.lighthouseResult?.audits ?? {};
-    const score = (k: string) =>
-      typeof cats[k]?.score === "number" ? Math.round(cats[k].score * 100) : null;
-    return {
-      performance: score("performance"),
-      accessibility: score("accessibility"),
-      bestPractices: score("best-practices"),
-      seo: score("seo"),
-      metrics: {
-        fcp: audits["first-contentful-paint"]?.displayValue ?? null,
-        lcp: audits["largest-contentful-paint"]?.displayValue ?? null,
-        cls: audits["cumulative-layout-shift"]?.displayValue ?? null,
-        tbt: audits["total-blocking-time"]?.displayValue ?? null,
-        tti: audits["interactive"]?.displayValue ?? null,
-        si: audits["speed-index"]?.displayValue ?? null,
-      },
-      screenshot: audits["final-screenshot"]?.details?.data ?? null,
-      strategy: "mobile",
-      fetchTime: data.lighthouseResult?.fetchTime ?? null,
-    };
-  } catch (e) {
-    return emptyLighthouse(e instanceof Error ? e.message : String(e));
-  } finally {
-    clearTimeout(timeout);
   }
+
+  return empty(lastError, RETRY_DELAYS_MS.length + 1);
 }
 
-function emptyLighthouse(error: string): LighthouseSummary {
+function empty(error: string, attempts: number): LighthouseSummary {
   return {
     performance: null,
     accessibility: null,
@@ -304,5 +527,41 @@ function emptyLighthouse(error: string): LighthouseSummary {
     strategy: "mobile",
     fetchTime: null,
     error,
+    attempts,
   };
+}
+
+/* ------------------------------------------------------------------ */
+/* Deterministic overall score                                         */
+/* ------------------------------------------------------------------ */
+
+export function computeOverallScore(
+  extracted: Extracted,
+  lighthouse: LighthouseSummary,
+): { score: number | null; basis: string } {
+  if (extracted.blocked) {
+    return {
+      score: null,
+      basis:
+        "No score assigned: the site blocked automated access, so no reliable page data could be collected.",
+    };
+  }
+
+  const parts: { value: number; weight: number; label: string }[] = [];
+  const push = (value: number | null | undefined, weight: number, label: string) => {
+    if (typeof value === "number") parts.push({ value, weight, label });
+  };
+
+  push(lighthouse.performance, 0.3, "Lighthouse performance");
+  push(lighthouse.accessibility ?? extracted.htmlEstimate.accessibility, 0.25, lighthouse.accessibility != null ? "Lighthouse accessibility" : "HTML accessibility estimate");
+  push(lighthouse.seo ?? extracted.htmlEstimate.seo, 0.25, lighthouse.seo != null ? "Lighthouse SEO" : "HTML SEO estimate");
+  push(lighthouse.bestPractices ?? extracted.htmlEstimate.bestPractices, 0.2, lighthouse.bestPractices != null ? "Lighthouse best practices" : "HTML best-practices estimate");
+
+  if (parts.length === 0) {
+    return { score: null, basis: "No score assigned: no measurable signals were collected." };
+  }
+
+  const totalWeight = parts.reduce((s, p) => s + p.weight, 0);
+  const score = clamp(parts.reduce((s, p) => s + p.value * p.weight, 0) / totalWeight);
+  return { score, basis: `Score computed from: ${parts.map((p) => `${p.label} (${p.value})`).join(", ")}.` };
 }
