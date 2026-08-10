@@ -54,6 +54,9 @@ function buildWarnings(extracted: Extracted, lighthouse: LighthouseSummary): str
     warnings.push("This website blocks automated crawlers. Results may be incomplete.");
     if (extracted.blockReason) warnings.push(extracted.blockReason);
   }
+  if (extracted.partial && extracted.captureWarning) {
+    warnings.push(extracted.captureWarning);
+  }
   if (extracted.renderMode === "rendered") {
     warnings.push("The page required JavaScript rendering; content was captured via a headless renderer.");
   }
@@ -129,6 +132,7 @@ export async function generateReport(
 
 URL: ${extracted.finalUrl}
 Content capture mode: ${extracted.renderMode === "rendered" ? "JavaScript-rendered" : "static HTML"}
+Partial JavaScript shell: ${extracted.partial ? "YES — analyse metadata only; do not infer page-body UX, CTA, trust, or conversion findings" : "no"}
 Lighthouse available: ${lighthouse.error ? `NO — ${lighthouse.error}` : "yes"}
 
 EXTRACTED PAGE DATA (JSON):
