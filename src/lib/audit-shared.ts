@@ -10,6 +10,9 @@ export interface Extracted {
   /** True when the origin served an anti-bot / challenge page instead of real content. */
   blocked: boolean;
   blockReason: string | null;
+  /** True when useful metadata was captured but the page body requires client-side JavaScript. */
+  partial: boolean;
+  captureWarning: string | null;
   /** "static" = plain fetch, "rendered" = fetched through a JS-rendering proxy. */
   renderMode: "static" | "rendered";
   title: string | null;

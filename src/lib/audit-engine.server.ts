@@ -153,7 +153,13 @@ function detectChallenge(status: number, html: string): string | null {
   if (status === 429) return "Origin returned HTTP 429 (rate limited)";
   if (status === 503 && compactText(html).length < 800) return "Origin returned HTTP 503 challenge";
   if (status >= 400) return `Origin returned HTTP ${status}`;
-  if (compactText(html).length < 200) return "Origin returned an empty or JS-only shell";
+  // Large app shells (YouTube and similar SPAs) often contain valid title,
+  // metadata and structured data but very little server-rendered body text.
+  // Treat only genuinely tiny responses as unreadable; partial shells are
+  // classified after extraction so their usable facts are not discarded.
+  if (html.length < 5000 && compactText(html).length < 200) {
+    return "Origin returned an empty or JS-only shell";
+  }
   return null;
 }
 
@@ -438,12 +444,24 @@ export async function crawlSite(rawUrl: string): Promise<Extracted> {
   const title = compactText(findElements(html, "title")[0]?.inner ?? "") || null;
   const canonicalHref = firstLinkHref(html, "canonical");
   const iconHref = firstLinkHref(html, "icon") || firstLinkHref(html, "shortcut icon");
+  const metadataSignals = [
+    title,
+    firstMetaContent(html, "name", "description"),
+    firstMetaContent(html, "property", "og:title"),
+    firstMetaContent(html, "property", "og:description"),
+  ].filter(Boolean).length;
+  const partial = !blocked && textSample.length < 200 && metadataSignals >= 2;
+  const captureWarning = partial
+    ? "The page is a JavaScript application. Metadata was analysed, but page-body, CTA and UX results may be incomplete."
+    : null;
 
   const base: Omit<Extracted, "htmlEstimate"> = {
     finalUrl,
     statusCode: res.status,
     blocked,
     blockReason,
+    partial,
+    captureWarning,
     renderMode,
     title,
     metaDescription:
