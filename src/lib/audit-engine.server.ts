@@ -157,7 +157,39 @@ function detectChallenge(status: number, html: string): string | null {
   return null;
 }
 
+/** Many origins block generic browser UAs but allow well-known search crawlers. */
+const CRAWLER_HEADERS: Record<string, string> = {
+  "User-Agent":
+    "Mozilla/5.0 (compatible; Googlebot/2.1; +http://www.google.com/bot.html)",
+  Accept: "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+  "Accept-Language": "en-US,en;q=0.9",
+  "Cache-Control": "no-cache",
+};
+
+async function fetchWithHeaders(
+  url: string,
+  headers: Record<string, string>,
+): Promise<{ res: Response; html: string }> {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS);
+  try {
+    const res = await fetch(url, { headers, redirect: "follow", signal: controller.signal });
+    const html = await res.text();
+    return { res, html };
+  } catch (e) {
+    if (e instanceof Error && e.name === "AbortError") {
+      throw new Error(`Request timed out after ${FETCH_TIMEOUT_MS / 1000}s: ${url}`);
+    }
+    throw new Error(
+      `Network error fetching ${url}: ${e instanceof Error ? e.message : String(e)}`,
+    );
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
 async function fetchWithBrowserHeaders(url: string, referer?: string): Promise<{ res: Response; html: string }> {
+
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS);
   try {
