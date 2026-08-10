@@ -302,11 +302,25 @@ function estimateFromHtml(e: Omit<Extracted, "htmlEstimate">): HtmlEstimate {
 export async function crawlSite(rawUrl: string): Promise<Extracted> {
   const url = normalizeUrl(rawUrl);
 
-  const { res, html: initialHtml } = await fetchWithBrowserHeaders(url);
-  let html = initialHtml;
+  let { res, html } = await fetchWithBrowserHeaders(url);
   let renderMode: "static" | "rendered" = "static";
   let blockReason = detectChallenge(res.status, html);
 
+  // Pass 2: retry as a well-known search crawler (many WAFs allow-list these).
+  if (blockReason) {
+    try {
+      const crawler = await fetchWithHeaders(url, CRAWLER_HEADERS);
+      if (!detectChallenge(crawler.res.status, crawler.html)) {
+        res = crawler.res;
+        html = crawler.html;
+        blockReason = null;
+      }
+    } catch {
+      /* keep the original block reason */
+    }
+  }
+
+  // Pass 3: headless rendering proxy.
   if (blockReason) {
     const rendered = await fetchRendered(url);
     if (rendered) {
@@ -318,6 +332,7 @@ export async function crawlSite(rawUrl: string): Promise<Extracted> {
       }
     }
   }
+
 
   const blocked = blockReason !== null;
   const finalUrl = res.url || url;
