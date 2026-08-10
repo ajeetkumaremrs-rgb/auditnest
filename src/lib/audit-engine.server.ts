@@ -268,24 +268,28 @@ function estimateFromHtml(e: Omit<Extracted, "htmlEstimate">): HtmlEstimate {
   const descLen = e.metaDescription?.length ?? 0;
   if (!descLen) seo -= 15;
   else if (descLen < 70 || descLen > 165) seo -= 6;
-  if (e.h1Count === 0) seo -= 12;
-  else if (e.h1Count > 1) seo -= 6;
+  // A partial SPA shell cannot prove that body-level elements are missing.
+  // Score only metadata/header signals that were actually observable.
+  if (!e.partial && e.h1Count === 0) seo -= 12;
+  else if (!e.partial && e.h1Count > 1) seo -= 6;
   if (!e.canonical) seo -= 6;
   if (!e.hasViewport) seo -= 10;
-  if (!e.hasRobots) seo -= 5;
-  if (!e.hasSitemap) seo -= 5;
+  if (!e.partial && !e.hasRobots) seo -= 5;
+  if (!e.partial && !e.hasSitemap) seo -= 5;
   if (Object.keys(e.openGraph).length === 0) seo -= 6;
   if (e.structuredData.length === 0) seo -= 6;
-  if (e.wordCount < 200) seo -= 10;
+  if (!e.partial && e.wordCount < 200) seo -= 10;
 
   // Accessibility
   let accessibility = 100;
   if (!e.language) accessibility -= 12;
   if (!e.hasViewport) accessibility -= 8;
   if (e.images.total > 0) accessibility -= Math.min(35, (e.images.missingAlt / e.images.total) * 45);
-  if (e.h1Count === 0) accessibility -= 10;
-  const emptyButtons = e.buttons.filter((b) => !b.trim()).length;
-  if (emptyButtons) accessibility -= Math.min(10, emptyButtons * 2);
+  if (!e.partial && e.h1Count === 0) accessibility -= 10;
+  if (!e.partial) {
+    const emptyButtons = e.buttons.filter((b) => !b.trim()).length;
+    if (emptyButtons) accessibility -= Math.min(10, emptyButtons * 2);
+  }
 
   // Best practices
   let bestPractices = 100;
@@ -503,7 +507,8 @@ const RETRY_DELAYS_MS = [2000, 5000, 10000];
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
 export async function runLighthouse(url: string): Promise<LighthouseSummary> {
-  const apiKey = process.env.PAGESPEED_API_KEY || process.env.GOOGLE_PAGESPEED_API_KEY || "";
+  const apiKey =
+    process.env["PAGESPEED_API_KEY"] || process.env["GOOGLE_PAGESPEED_API_KEY"] || "";
   const cacheKey = `mobile:${url}`;
   const hit = psiCache.get(cacheKey);
   if (hit && Date.now() - hit.at < PSI_CACHE_TTL_MS) {
@@ -618,9 +623,10 @@ export function computeOverallScore(
   };
 
   push(lighthouse.performance, 0.3, "Lighthouse performance");
-  push(lighthouse.accessibility ?? extracted.htmlEstimate.accessibility, 0.25, lighthouse.accessibility != null ? "Lighthouse accessibility" : "HTML accessibility estimate");
-  push(lighthouse.seo ?? extracted.htmlEstimate.seo, 0.25, lighthouse.seo != null ? "Lighthouse SEO" : "HTML SEO estimate");
-  push(lighthouse.bestPractices ?? extracted.htmlEstimate.bestPractices, 0.2, lighthouse.bestPractices != null ? "Lighthouse best practices" : "HTML best-practices estimate");
+  const estimatePrefix = extracted.partial ? "captured metadata" : "HTML";
+  push(lighthouse.accessibility ?? extracted.htmlEstimate.accessibility, 0.25, lighthouse.accessibility != null ? "Lighthouse accessibility" : `${estimatePrefix} accessibility estimate`);
+  push(lighthouse.seo ?? extracted.htmlEstimate.seo, 0.25, lighthouse.seo != null ? "Lighthouse SEO" : `${estimatePrefix} SEO estimate`);
+  push(lighthouse.bestPractices ?? extracted.htmlEstimate.bestPractices, 0.2, lighthouse.bestPractices != null ? "Lighthouse best practices" : `${estimatePrefix} best-practices estimate`);
 
   if (parts.length === 0) {
     return { score: null, basis: "No score assigned: no measurable signals were collected." };
