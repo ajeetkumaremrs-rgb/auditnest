@@ -63,6 +63,8 @@ export interface LighthouseSummary {
   attempts?: number;
   /** True when served from the 10-minute cache. */
   cached?: boolean;
+  /** True when a PageSpeed API key was used (higher quota), false for keyless mode. */
+  apiKeyUsed?: boolean;
 }
 
 export type Priority = "high" | "medium" | "low";
