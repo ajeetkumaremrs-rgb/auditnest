@@ -543,7 +543,7 @@ export async function runLighthouse(url: string): Promise<LighthouseSummary> {
       }
       if (!res.ok) {
         const detail = await res.text().catch(() => "");
-        return empty(`PageSpeed API returned ${res.status}${detail ? `: ${detail.slice(0, 200)}` : ""}`, attempt);
+        return empty(`PageSpeed API returned ${res.status}${detail ? `: ${detail.slice(0, 200)}` : ""}`, attempt, Boolean(apiKey));
       }
 
       const data: any = await res.json();
@@ -568,6 +568,7 @@ export async function runLighthouse(url: string): Promise<LighthouseSummary> {
         strategy: "mobile",
         fetchTime: data.lighthouseResult?.fetchTime ?? null,
         attempts: attempt + 1,
+        apiKeyUsed: Boolean(apiKey),
       };
       psiCache.set(cacheKey, { at: Date.now(), value });
       return value;
@@ -583,10 +584,10 @@ export async function runLighthouse(url: string): Promise<LighthouseSummary> {
     }
   }
 
-  return empty(lastError, RETRY_DELAYS_MS.length + 1);
+  return empty(lastError, RETRY_DELAYS_MS.length + 1, Boolean(apiKey));
 }
 
-function empty(error: string, attempts: number): LighthouseSummary {
+function empty(error: string, attempts: number, apiKeyUsed = false): LighthouseSummary {
   return {
     performance: null,
     accessibility: null,
@@ -598,6 +599,7 @@ function empty(error: string, attempts: number): LighthouseSummary {
     fetchTime: null,
     error,
     attempts,
+    apiKeyUsed,
   };
 }
 
