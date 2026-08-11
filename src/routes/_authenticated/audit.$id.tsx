@@ -142,6 +142,18 @@ function ReportView({
 
       {lighthouse && (
         <Section title="Lighthouse performance">
+          <div className="mb-3 flex flex-wrap gap-2 text-xs">
+            <span className="rounded-full bg-muted px-2 py-1 text-muted-foreground">
+              {lighthouse.apiKeyUsed
+                ? "PageSpeed API key active (higher quota)"
+                : "Keyless mode — add a PageSpeed API key to avoid rate limits"}
+            </span>
+            {typeof lighthouse.attempts === "number" && (
+              <span className="rounded-full bg-muted px-2 py-1 text-muted-foreground">
+                {lighthouse.attempts} attempt{lighthouse.attempts === 1 ? "" : "s"}
+              </span>
+            )}
+          </div>
           <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
             <MetricCard label="Performance" score={lighthouse.performance} />
             <MetricCard label="Accessibility" score={lighthouse.accessibility} />
