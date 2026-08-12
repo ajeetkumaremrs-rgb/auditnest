@@ -229,18 +229,20 @@ Do not output any numeric score — scores are computed separately from measured
   const end = normalized.lastIndexOf("}");
   const jsonText = start >= 0 && end > start ? normalized.slice(start, end + 1) : normalized;
 
-  let ai: z.infer<typeof aiSchema>;
+  let ai: AiReport;
   try {
-    ai = aiSchema.parse(JSON.parse(jsonText));
+    ai = normalizeAi(JSON.parse(jsonText));
   } catch (error) {
     console.error("[audit] invalid AI report", { error, preview: normalized.slice(0, 800) });
     // Never fail the whole audit on a malformed model response — the measured
     // crawl + Lighthouse data is still real and worth showing.
-    ai = aiSchema.parse({
+    ai = normalizeAi({
       summary: normalized.slice(0, 1200) || "The AI narrative could not be generated for this audit.",
       performanceNotes: lighthouse.error ?? "",
     });
   }
+  if (!ai.summary) ai.summary = "The AI narrative was incomplete; measured data is shown below.";
+
 
   const { score, basis } = computeOverallScore(extracted, lighthouse);
 
