@@ -141,7 +141,10 @@ function ReportView({
 
 
       {lighthouse && (
-        <Section title="Lighthouse performance">
+        <Section title="PageSpeed Insights (Lighthouse)">
+          <p className="mb-3 text-sm text-muted-foreground">
+            Measured by Google in a real browser — independent of the HTML crawler below.
+          </p>
           <div className="mb-3 flex flex-wrap gap-2 text-xs">
             <span className="rounded-full bg-muted px-2 py-1 text-muted-foreground">
               {lighthouse.apiKeyUsed
@@ -175,7 +178,30 @@ function ReportView({
         </Section>
       )}
 
+      <div className="pt-2">
+        <h2 className="text-lg font-semibold">HTML / content audit</h2>
+        <p className="text-sm text-muted-foreground">
+          Based on the page HTML fetched by our crawler.
+        </p>
+      </div>
+
+      {extracted?.blocked && (
+        <Card className="p-5 border-warning/50 bg-warning/5 text-sm">
+          <div className="flex items-start gap-3">
+            <AlertTriangle className="h-5 w-5 text-warning-foreground shrink-0 mt-0.5" />
+            <div>
+              <p className="font-medium">This website blocks automated crawlers. Results may be incomplete.</p>
+              <p className="mt-1 text-muted-foreground">
+                {extracted.blockReason ?? "An anti-bot or challenge page was served instead of the real content."}{" "}
+                No SEO, UX, CTA or conversion scores were generated from it.
+              </p>
+            </div>
+          </div>
+        </Card>
+      )}
+
       <Section title="Homepage clarity"><P>{report.homepageClarity}</P></Section>
+
 
       <Section title="Call-to-action">
         <ul className="list-disc pl-5 space-y-1 text-sm">

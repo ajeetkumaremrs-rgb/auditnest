@@ -137,13 +137,21 @@ function buildWarnings(extracted: Extracted, lighthouse: LighthouseSummary): str
 function blockedReport(extracted: Extracted, lighthouse: LighthouseSummary): AuditReport {
   const { score, basis } = computeOverallScore(extracted, lighthouse);
   const na = "Not analysed — the site blocked automated access.";
+  const lighthouseOk =
+    !lighthouse.error &&
+    [lighthouse.performance, lighthouse.accessibility, lighthouse.seo, lighthouse.bestPractices].some(
+      (v) => typeof v === "number",
+    );
   return {
     overallScore: score,
     scoreBasis: basis,
     warnings: buildWarnings(extracted, lighthouse),
     summary:
       `We could not read the real content of ${extracted.finalUrl}. ${extracted.blockReason ?? "The origin served an anti-bot page."} ` +
-      "No SEO, UX or conversion scores were generated, because any result would be misleading.",
+      "No SEO, UX or conversion scores were generated, because any result would be misleading." +
+      (lighthouseOk
+        ? " Google PageSpeed / Lighthouse metrics were measured independently and are shown below — they remain valid."
+        : ""),
     homepageClarity: na,
     ctaAnalysis: { findings: [], suggestedCta: na },
     trust: { detected: [], missing: [], notes: na },
@@ -156,7 +164,9 @@ function blockedReport(extracted: Extracted, lighthouse: LighthouseSummary): Aud
       accessibilityScore: lighthouse.accessibility,
       seoScore: lighthouse.seo,
       bestPracticesScore: lighthouse.bestPractices,
-      notes: lighthouse.error ?? "Lighthouse data unavailable for a blocked page.",
+      notes: lighthouseOk
+        ? "These scores come from Google PageSpeed Insights (Lighthouse), which loads the page in a real browser, so they are unaffected by the crawler being blocked."
+        : lighthouse.error ?? "Lighthouse data unavailable for a blocked page.",
     },
     conversion: [],
     recommendations: [
