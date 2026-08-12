@@ -15,11 +15,11 @@ const strList = z
         ? [v]
         : [],
   );
-const text = str.nullable().optional().transform((v) => v ?? "");
+const txt = str.nullable().optional().transform((v) => v ?? "");
 
 const aiSchema = z.object({
-  summary: text,
-  homepageClarity: text,
+  summary: txt,
+  homepageClarity: txt,
   ctaAnalysis: z
     .object({ findings: strList, suggestedCta: text })
     .partial()
@@ -38,10 +38,10 @@ const aiSchema = z.object({
   mobile: strList,
   seo: z
     .object({
-      metaTitle: text,
-      metaDescription: text,
-      headings: text,
-      imageAlt: text,
+      metaTitle: txt,
+      metaDescription: txt,
+      headings: txt,
+      imageAlt: txt,
       other: strList,
     })
     .partial()
@@ -54,15 +54,15 @@ const aiSchema = z.object({
       other: v?.other ?? [],
     })),
   accessibility: strList,
-  performanceNotes: text,
+  performanceNotes: txt,
   conversion: strList,
   recommendations: z
     .array(
       z.object({
-        problem: text,
-        why: text,
-        fix: text,
-        impact: text,
+        problem: txt,
+        why: txt,
+        fix: txt,
+        impact: txt,
         priority: z
           .string()
           .optional()
@@ -75,12 +75,12 @@ const aiSchema = z.object({
     .transform((v) => v ?? []),
   suggestions: z
     .object({
-      headline: text,
-      cta: text,
-      hero: text,
-      pricing: text,
-      features: text,
-      testimonials: text,
+      headline: txt,
+      cta: txt,
+      hero: txt,
+      pricing: txt,
+      features: txt,
+      testimonials: txt,
     })
     .partial()
     .optional()
@@ -201,12 +201,22 @@ Do not output any numeric score — scores are computed separately from measured
   const { text } = await generateText({ model, prompt });
   const normalized = text.trim().replace(/^```(?:json)?\s*/i, "").replace(/\s*```$/, "");
 
+  // Models occasionally wrap JSON in prose; take the outermost JSON object.
+  const start = normalized.indexOf("{");
+  const end = normalized.lastIndexOf("}");
+  const jsonText = start >= 0 && end > start ? normalized.slice(start, end + 1) : normalized;
+
   let ai: z.infer<typeof aiSchema>;
   try {
-    ai = aiSchema.parse(JSON.parse(normalized));
+    ai = aiSchema.parse(JSON.parse(jsonText));
   } catch (error) {
-    console.error("[audit] invalid AI report", { error, preview: normalized.slice(0, 500) });
-    throw new Error("AI returned an invalid report");
+    console.error("[audit] invalid AI report", { error, preview: normalized.slice(0, 800) });
+    // Never fail the whole audit on a malformed model response — the measured
+    // crawl + Lighthouse data is still real and worth showing.
+    ai = aiSchema.parse({
+      summary: normalized.slice(0, 1200) || "The AI narrative could not be generated for this audit.",
+      performanceNotes: lighthouse.error ?? "",
+    });
   }
 
   const { score, basis } = computeOverallScore(extracted, lighthouse);
