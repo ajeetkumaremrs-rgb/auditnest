@@ -1,52 +1,115 @@
 import { generateText } from "ai";
-import { z } from "zod";
 
-import type { AuditReport, Extracted, LighthouseSummary } from "./audit-shared";
+import type { AuditReport, Extracted, LighthouseSummary, Priority } from "./audit-shared";
 import { createLovableAiGatewayProvider } from "./ai-gateway.server";
 import { computeOverallScore } from "./audit-engine.server";
 
-const aiSchema = z.object({
-  summary: z.string(),
-  homepageClarity: z.string(),
-  ctaAnalysis: z.object({
-    findings: z.array(z.string()),
-    suggestedCta: z.string(),
-  }),
-  trust: z.object({
-    detected: z.array(z.string()),
-    missing: z.array(z.string()),
-    notes: z.string(),
-  }),
-  ux: z.array(z.string()),
-  mobile: z.array(z.string()),
-  seo: z.object({
-    metaTitle: z.string(),
-    metaDescription: z.string(),
-    headings: z.string(),
-    imageAlt: z.string(),
-    other: z.array(z.string()),
-  }),
-  accessibility: z.array(z.string()),
-  performanceNotes: z.string(),
-  conversion: z.array(z.string()),
-  recommendations: z.array(
-    z.object({
-      problem: z.string(),
-      why: z.string(),
-      fix: z.string(),
-      impact: z.string(),
-      priority: z.enum(["high", "medium", "low"]),
-    }),
-  ),
-  suggestions: z.object({
-    headline: z.string().nullable(),
-    cta: z.string().nullable(),
-    hero: z.string().nullable(),
-    pricing: z.string().nullable(),
-    features: z.string().nullable(),
-    testimonials: z.string().nullable(),
-  }),
-});
+/* Models occasionally omit fields, return null, or use the wrong type.
+   Normalize defensively instead of rejecting the whole report. */
+const txt = (v: unknown): string =>
+  typeof v === "string" ? v : typeof v === "number" || typeof v === "boolean" ? String(v) : "";
+
+const list = (v: unknown): string[] => {
+  if (Array.isArray(v)) {
+    return v
+      .map((x) => (typeof x === "string" ? x : x == null ? "" : JSON.stringify(x)))
+      .filter((x) => x.trim().length > 0);
+  }
+  const s = txt(v).trim();
+  return s ? [s] : [];
+};
+
+const obj = (v: unknown): Record<string, unknown> =>
+  v && typeof v === "object" && !Array.isArray(v) ? (v as Record<string, unknown>) : {};
+
+const nullableTxt = (v: unknown): string | null => txt(v).trim() || null;
+
+interface AiReport {
+  summary: string;
+  homepageClarity: string;
+  ctaAnalysis: { findings: string[]; suggestedCta: string };
+  trust: { detected: string[]; missing: string[]; notes: string };
+  ux: string[];
+  mobile: string[];
+  seo: {
+    metaTitle: string;
+    metaDescription: string;
+    headings: string;
+    imageAlt: string;
+    other: string[];
+  };
+  accessibility: string[];
+  performanceNotes: string;
+  conversion: string[];
+  recommendations: {
+    problem: string;
+    why: string;
+    fix: string;
+    impact: string;
+    priority: Priority;
+  }[];
+  suggestions: {
+    headline: string | null;
+    cta: string | null;
+    hero: string | null;
+    pricing: string | null;
+    features: string | null;
+    testimonials: string | null;
+  };
+}
+
+function normalizeAi(raw: unknown): AiReport {
+  const r = obj(raw);
+  const cta = obj(r["ctaAnalysis"]);
+  const trust = obj(r["trust"]);
+  const seo = obj(r["seo"]);
+  const sug = obj(r["suggestions"]);
+  const recs = Array.isArray(r["recommendations"]) ? (r["recommendations"] as unknown[]) : [];
+
+  return {
+    summary: txt(r["summary"]),
+    homepageClarity: txt(r["homepageClarity"]),
+    ctaAnalysis: { findings: list(cta["findings"]), suggestedCta: txt(cta["suggestedCta"]) },
+    trust: {
+      detected: list(trust["detected"]),
+      missing: list(trust["missing"]),
+      notes: txt(trust["notes"]),
+    },
+    ux: list(r["ux"]),
+    mobile: list(r["mobile"]),
+    seo: {
+      metaTitle: txt(seo["metaTitle"]),
+      metaDescription: txt(seo["metaDescription"]),
+      headings: txt(seo["headings"]),
+      imageAlt: txt(seo["imageAlt"]),
+      other: list(seo["other"]),
+    },
+    accessibility: list(r["accessibility"]),
+    performanceNotes: txt(r["performanceNotes"]),
+    conversion: list(r["conversion"]),
+    recommendations: recs.map((item) => {
+      const rec = obj(item);
+      const p = txt(rec["priority"]).toLowerCase();
+      return {
+        problem: txt(rec["problem"]),
+        why: txt(rec["why"]),
+        fix: txt(rec["fix"]),
+        impact: txt(rec["impact"]),
+        priority: (p === "high" || p === "low" ? p : "medium") as Priority,
+      };
+    }).filter((rec) => rec.problem || rec.fix),
+    suggestions: {
+      headline: nullableTxt(sug["headline"]),
+      cta: nullableTxt(sug["cta"]),
+      hero: nullableTxt(sug["hero"]),
+      pricing: nullableTxt(sug["pricing"]),
+      features: nullableTxt(sug["features"]),
+      testimonials: nullableTxt(sug["testimonials"]),
+    },
+  };
+}
+
+
 
 function buildWarnings(extracted: Extracted, lighthouse: LighthouseSummary): string[] {
   const warnings: string[] = [];
@@ -161,13 +224,25 @@ Do not output any numeric score — scores are computed separately from measured
   const { text } = await generateText({ model, prompt });
   const normalized = text.trim().replace(/^```(?:json)?\s*/i, "").replace(/\s*```$/, "");
 
-  let ai: z.infer<typeof aiSchema>;
+  // Models occasionally wrap JSON in prose; take the outermost JSON object.
+  const start = normalized.indexOf("{");
+  const end = normalized.lastIndexOf("}");
+  const jsonText = start >= 0 && end > start ? normalized.slice(start, end + 1) : normalized;
+
+  let ai: AiReport;
   try {
-    ai = aiSchema.parse(JSON.parse(normalized));
+    ai = normalizeAi(JSON.parse(jsonText));
   } catch (error) {
-    console.error("[audit] invalid AI report", { error, preview: normalized.slice(0, 500) });
-    throw new Error("AI returned an invalid report");
+    console.error("[audit] invalid AI report", { error, preview: normalized.slice(0, 800) });
+    // Never fail the whole audit on a malformed model response — the measured
+    // crawl + Lighthouse data is still real and worth showing.
+    ai = normalizeAi({
+      summary: normalized.slice(0, 1200) || "The AI narrative could not be generated for this audit.",
+      performanceNotes: lighthouse.error ?? "",
+    });
   }
+  if (!ai.summary) ai.summary = "The AI narrative was incomplete; measured data is shown below.";
+
 
   const { score, basis } = computeOverallScore(extracted, lighthouse);
 
