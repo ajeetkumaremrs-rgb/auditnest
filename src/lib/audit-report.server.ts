@@ -1,91 +1,114 @@
 import { generateText } from "ai";
-import { z } from "zod";
 
-import type { AuditReport, Extracted, LighthouseSummary } from "./audit-shared";
+import type { AuditReport, Extracted, LighthouseSummary, Priority } from "./audit-shared";
 import { createLovableAiGatewayProvider } from "./ai-gateway.server";
 import { computeOverallScore } from "./audit-engine.server";
 
-const str = z.union([z.string(), z.number(), z.boolean()]).transform(String);
-const strList = z
-  .union([z.array(z.any()), z.string(), z.null(), z.undefined()])
-  .transform((v) =>
-    Array.isArray(v)
-      ? v.map((x) => (typeof x === "string" ? x : JSON.stringify(x))).filter(Boolean)
-      : typeof v === "string" && v.trim()
-        ? [v]
-        : [],
-  );
-const txt = str.nullable().optional().transform((v) => v ?? "");
+/* Models occasionally omit fields, return null, or use the wrong type.
+   Normalize defensively instead of rejecting the whole report. */
+const txt = (v: unknown): string =>
+  typeof v === "string" ? v : typeof v === "number" || typeof v === "boolean" ? String(v) : "";
 
-const aiSchema = z.object({
-  summary: txt,
-  homepageClarity: txt,
-  ctaAnalysis: z
-    .object({ findings: strList, suggestedCta: text })
-    .partial()
-    .optional()
-    .transform((v) => ({ findings: v?.findings ?? [], suggestedCta: v?.suggestedCta ?? "" })),
-  trust: z
-    .object({ detected: strList, missing: strList, notes: text })
-    .partial()
-    .optional()
-    .transform((v) => ({
-      detected: v?.detected ?? [],
-      missing: v?.missing ?? [],
-      notes: v?.notes ?? "",
-    })),
-  ux: strList,
-  mobile: strList,
-  seo: z
-    .object({
-      metaTitle: txt,
-      metaDescription: txt,
-      headings: txt,
-      imageAlt: txt,
-      other: strList,
-    })
-    .partial()
-    .optional()
-    .transform((v) => ({
-      metaTitle: v?.metaTitle ?? "",
-      metaDescription: v?.metaDescription ?? "",
-      headings: v?.headings ?? "",
-      imageAlt: v?.imageAlt ?? "",
-      other: v?.other ?? [],
-    })),
-  accessibility: strList,
-  performanceNotes: txt,
-  conversion: strList,
-  recommendations: z
-    .array(
-      z.object({
-        problem: txt,
-        why: txt,
-        fix: txt,
-        impact: txt,
-        priority: z
-          .string()
-          .optional()
-          .transform((p) =>
-            p === "high" || p === "medium" || p === "low" ? p : ("medium" as const),
-          ),
-      }),
-    )
-    .optional()
-    .transform((v) => v ?? []),
-  suggestions: z
-    .object({
-      headline: txt,
-      cta: txt,
-      hero: txt,
-      pricing: txt,
-      features: txt,
-      testimonials: txt,
-    })
-    .partial()
-    .optional()
-    .transform((v) => v ?? {}),
-});
+const list = (v: unknown): string[] => {
+  if (Array.isArray(v)) {
+    return v
+      .map((x) => (typeof x === "string" ? x : x == null ? "" : JSON.stringify(x)))
+      .filter((x) => x.trim().length > 0);
+  }
+  const s = txt(v).trim();
+  return s ? [s] : [];
+};
+
+const obj = (v: unknown): Record<string, unknown> =>
+  v && typeof v === "object" && !Array.isArray(v) ? (v as Record<string, unknown>) : {};
+
+const nullableTxt = (v: unknown): string | null => txt(v).trim() || null;
+
+interface AiReport {
+  summary: string;
+  homepageClarity: string;
+  ctaAnalysis: { findings: string[]; suggestedCta: string };
+  trust: { detected: string[]; missing: string[]; notes: string };
+  ux: string[];
+  mobile: string[];
+  seo: {
+    metaTitle: string;
+    metaDescription: string;
+    headings: string;
+    imageAlt: string;
+    other: string[];
+  };
+  accessibility: string[];
+  performanceNotes: string;
+  conversion: string[];
+  recommendations: {
+    problem: string;
+    why: string;
+    fix: string;
+    impact: string;
+    priority: Priority;
+  }[];
+  suggestions: {
+    headline: string | null;
+    cta: string | null;
+    hero: string | null;
+    pricing: string | null;
+    features: string | null;
+    testimonials: string | null;
+  };
+}
+
+function normalizeAi(raw: unknown): AiReport {
+  const r = obj(raw);
+  const cta = obj(r["ctaAnalysis"]);
+  const trust = obj(r["trust"]);
+  const seo = obj(r["seo"]);
+  const sug = obj(r["suggestions"]);
+  const recs = Array.isArray(r["recommendations"]) ? (r["recommendations"] as unknown[]) : [];
+
+  return {
+    summary: txt(r["summary"]),
+    homepageClarity: txt(r["homepageClarity"]),
+    ctaAnalysis: { findings: list(cta["findings"]), suggestedCta: txt(cta["suggestedCta"]) },
+    trust: {
+      detected: list(trust["detected"]),
+      missing: list(trust["missing"]),
+      notes: txt(trust["notes"]),
+    },
+    ux: list(r["ux"]),
+    mobile: list(r["mobile"]),
+    seo: {
+      metaTitle: txt(seo["metaTitle"]),
+      metaDescription: txt(seo["metaDescription"]),
+      headings: txt(seo["headings"]),
+      imageAlt: txt(seo["imageAlt"]),
+      other: list(seo["other"]),
+    },
+    accessibility: list(r["accessibility"]),
+    performanceNotes: txt(r["performanceNotes"]),
+    conversion: list(r["conversion"]),
+    recommendations: recs.map((item) => {
+      const rec = obj(item);
+      const p = txt(rec["priority"]).toLowerCase();
+      return {
+        problem: txt(rec["problem"]),
+        why: txt(rec["why"]),
+        fix: txt(rec["fix"]),
+        impact: txt(rec["impact"]),
+        priority: (p === "high" || p === "low" ? p : "medium") as Priority,
+      };
+    }).filter((rec) => rec.problem || rec.fix),
+    suggestions: {
+      headline: nullableTxt(sug["headline"]),
+      cta: nullableTxt(sug["cta"]),
+      hero: nullableTxt(sug["hero"]),
+      pricing: nullableTxt(sug["pricing"]),
+      features: nullableTxt(sug["features"]),
+      testimonials: nullableTxt(sug["testimonials"]),
+    },
+  };
+}
+
 
 
 function buildWarnings(extracted: Extracted, lighthouse: LighthouseSummary): string[] {
