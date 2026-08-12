@@ -5,48 +5,88 @@ import type { AuditReport, Extracted, LighthouseSummary } from "./audit-shared";
 import { createLovableAiGatewayProvider } from "./ai-gateway.server";
 import { computeOverallScore } from "./audit-engine.server";
 
+const str = z.union([z.string(), z.number(), z.boolean()]).transform(String);
+const strList = z
+  .union([z.array(z.any()), z.string(), z.null(), z.undefined()])
+  .transform((v) =>
+    Array.isArray(v)
+      ? v.map((x) => (typeof x === "string" ? x : JSON.stringify(x))).filter(Boolean)
+      : typeof v === "string" && v.trim()
+        ? [v]
+        : [],
+  );
+const text = str.nullable().optional().transform((v) => v ?? "");
+
 const aiSchema = z.object({
-  summary: z.string(),
-  homepageClarity: z.string(),
-  ctaAnalysis: z.object({
-    findings: z.array(z.string()),
-    suggestedCta: z.string(),
-  }),
-  trust: z.object({
-    detected: z.array(z.string()),
-    missing: z.array(z.string()),
-    notes: z.string(),
-  }),
-  ux: z.array(z.string()),
-  mobile: z.array(z.string()),
-  seo: z.object({
-    metaTitle: z.string(),
-    metaDescription: z.string(),
-    headings: z.string(),
-    imageAlt: z.string(),
-    other: z.array(z.string()),
-  }),
-  accessibility: z.array(z.string()),
-  performanceNotes: z.string(),
-  conversion: z.array(z.string()),
-  recommendations: z.array(
-    z.object({
-      problem: z.string(),
-      why: z.string(),
-      fix: z.string(),
-      impact: z.string(),
-      priority: z.enum(["high", "medium", "low"]),
-    }),
-  ),
-  suggestions: z.object({
-    headline: z.string().nullable(),
-    cta: z.string().nullable(),
-    hero: z.string().nullable(),
-    pricing: z.string().nullable(),
-    features: z.string().nullable(),
-    testimonials: z.string().nullable(),
-  }),
+  summary: text,
+  homepageClarity: text,
+  ctaAnalysis: z
+    .object({ findings: strList, suggestedCta: text })
+    .partial()
+    .optional()
+    .transform((v) => ({ findings: v?.findings ?? [], suggestedCta: v?.suggestedCta ?? "" })),
+  trust: z
+    .object({ detected: strList, missing: strList, notes: text })
+    .partial()
+    .optional()
+    .transform((v) => ({
+      detected: v?.detected ?? [],
+      missing: v?.missing ?? [],
+      notes: v?.notes ?? "",
+    })),
+  ux: strList,
+  mobile: strList,
+  seo: z
+    .object({
+      metaTitle: text,
+      metaDescription: text,
+      headings: text,
+      imageAlt: text,
+      other: strList,
+    })
+    .partial()
+    .optional()
+    .transform((v) => ({
+      metaTitle: v?.metaTitle ?? "",
+      metaDescription: v?.metaDescription ?? "",
+      headings: v?.headings ?? "",
+      imageAlt: v?.imageAlt ?? "",
+      other: v?.other ?? [],
+    })),
+  accessibility: strList,
+  performanceNotes: text,
+  conversion: strList,
+  recommendations: z
+    .array(
+      z.object({
+        problem: text,
+        why: text,
+        fix: text,
+        impact: text,
+        priority: z
+          .string()
+          .optional()
+          .transform((p) =>
+            p === "high" || p === "medium" || p === "low" ? p : ("medium" as const),
+          ),
+      }),
+    )
+    .optional()
+    .transform((v) => v ?? []),
+  suggestions: z
+    .object({
+      headline: text,
+      cta: text,
+      hero: text,
+      pricing: text,
+      features: text,
+      testimonials: text,
+    })
+    .partial()
+    .optional()
+    .transform((v) => v ?? {}),
 });
+
 
 function buildWarnings(extracted: Extracted, lighthouse: LighthouseSummary): string[] {
   const warnings: string[] = [];
