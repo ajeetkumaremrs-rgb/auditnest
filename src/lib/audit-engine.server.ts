@@ -133,25 +133,40 @@ function collectPrefixedMeta(html: string, prefix: string): Record<string, strin
 
 const CHALLENGE_MARKERS = [
   "enable javascript and cookies to continue",
-  "just a moment...",
-  "checking your browser before accessing",
+  "just a moment",
+  "checking your browser",
+  "checking if the site connection is secure",
   "verify you are human",
+  "verifying you are human",
   "attention required! | cloudflare",
   "please enable js and disable any ad blocker",
   "ddos protection by cloudflare",
   "access denied",
   "request unsuccessful. incapsula",
   "pardon our interruption",
+  "cf-browser-verification",
+  "cf_chl_opt",
+  "/cdn-cgi/challenge-platform",
+  "captcha-delivery.com",
+  "g-recaptcha",
+  "h-captcha",
+  "are you a robot",
+  "unusual traffic from your computer network",
+  "bot detection",
+  "perimeterx",
+  "px-captcha",
 ];
 
 function detectChallenge(status: number, html: string): string | null {
   const lower = html.slice(0, 20000).toLowerCase();
   for (const marker of CHALLENGE_MARKERS) {
-    if (lower.includes(marker)) return "Anti-bot challenge page detected";
+    if (lower.includes(marker)) return "Anti-bot / CAPTCHA challenge page detected";
   }
+  if (status === 401) return "Origin returned HTTP 401 (authentication required)";
   if (status === 403) return "Origin returned HTTP 403 (crawler blocked)";
   if (status === 429) return "Origin returned HTTP 429 (rate limited)";
   if (status === 503 && compactText(html).length < 800) return "Origin returned HTTP 503 challenge";
+  if (status >= 500) return `Origin returned HTTP ${status} (server error)`;
   if (status >= 400) return `Origin returned HTTP ${status}`;
   // Large app shells (YouTube and similar SPAs) often contain valid title,
   // metadata and structured data but very little server-rendered body text.
