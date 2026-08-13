@@ -372,7 +372,8 @@ export async function crawlSite(rawUrl: string): Promise<Extracted> {
     }
   }
 
-  // Pass 3: headless rendering proxy.
+  // Pass 3: headless rendering (blocked pages).
+  let renderFailed = false;
   if (blockReason) {
     const rendered = await fetchRendered(url);
     if (rendered) {
@@ -382,8 +383,25 @@ export async function crawlSite(rawUrl: string): Promise<Extracted> {
         renderMode = "rendered";
         blockReason = null;
       }
+    } else {
+      renderFailed = true;
     }
   }
+
+  // Pass 4: the origin responded fine but served a JavaScript app shell.
+  // Always render such pages so UX / CTA / conversion analysis sees the real DOM.
+  if (!blockReason && bodyTextLength(html) < 600) {
+    const rendered = await fetchRendered(url);
+    if (rendered && bodyTextLength(rendered) > bodyTextLength(html)) {
+      html = rendered;
+      renderMode = "rendered";
+      renderFailed = false;
+    } else {
+      renderFailed = true;
+    }
+  }
+
+
 
 
   const blocked = blockReason !== null;
