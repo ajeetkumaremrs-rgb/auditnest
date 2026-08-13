@@ -235,27 +235,71 @@ async function fetchWithBrowserHeaders(url: string, referer?: string): Promise<{
 }
 
 /**
- * JS-rendering fallback. Playwright/Puppeteer cannot run in this serverless
- * runtime (no native browser binary), so we delegate rendering to a headless
- * rendering proxy that executes JS and returns the final HTML.
+ * Headless-browser rendering. Playwright/Puppeteer/Chromium cannot run inside
+ * this serverless runtime (no native browser binary and no subprocesses), so
+ * rendering is delegated to a remote headless-Chromium service that executes
+ * JavaScript, waits for the page to settle, and returns the final DOM.
+ * Works for React, Next.js, Vue, Angular and other client-rendered apps.
  */
-async function fetchRendered(url: string): Promise<string | null> {
+const RENDER_TIMEOUT_MS = 45000;
+
+function escapeHtml(v: string): string {
+  return v.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+}
+
+/** Converts the renderer's markdown output of the rendered DOM into parseable HTML. */
+function markdownToHtml(md: string): string {
+  const body = md
+    .replace(/^Title:.*$/im, "")
+    .replace(/^URL Source:.*$/im, "")
+    .replace(/^Warning:.*$/im, "")
+    .replace(/^Markdown Content:\s*/im, "");
+
+  const lines = body.split(/\r?\n/);
+  const out: string[] = [];
+  for (const line of lines) {
+    const t = line.trim();
+    if (!t) continue;
+    const heading = /^(#{1,6})\s+(.*)$/.exec(t);
+    if (heading) {
+      const level = heading[1].length;
+      out.push(`<h${level}>${escapeHtml(heading[2].replace(/[*_`]/g, ""))}</h${level}>`);
+      continue;
+    }
+    const withLinks = escapeHtml(t).replace(
+      /\[([^\]]*)\]\(([^)\s]+)[^)]*\)/g,
+      (_m, label: string, href: string) => `<a href="${href}">${label || href}</a>`,
+    );
+    out.push(`<p>${withLinks.replace(/[*_`]/g, "")}</p>`);
+  }
+  return `<html><body>${out.join("\n")}</body></html>`;
+}
+
+async function renderOnce(
+  url: string,
+  waitMs: number,
+  mode: "html" | "markdown",
+): Promise<string | null> {
   const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS);
+  const timeout = setTimeout(() => controller.abort(), RENDER_TIMEOUT_MS);
   try {
-    const token = process.env.JINA_API_KEY;
+    const token = process.env["JINA_API_KEY"];
     const res = await fetch(`https://r.jina.ai/${url}`, {
       headers: {
-        "x-return-format": "html",
-        "x-timeout": "25",
+        ...(mode === "html" ? { "x-return-format": "html", "x-engine": "browser" } : {}),
+        "x-timeout": "30",
+        "x-cache-tolerance": "0",
+        ...(waitMs ? { "x-wait-for-timeout": String(waitMs) } : {}),
         Accept: "text/html,*/*;q=0.8",
         ...(token ? { Authorization: `Bearer ${token}` } : {}),
       },
       signal: controller.signal,
     });
     if (!res.ok) return null;
-    const html = await res.text();
-    if (!html || compactText(html).length < 200) return null;
+    const text = await res.text();
+    if (!text) return null;
+    const html = mode === "html" ? text : markdownToHtml(text);
+    if (compactText(html).length < 200) return null;
     return html;
   } catch {
     return null;
@@ -263,6 +307,33 @@ async function fetchRendered(url: string): Promise<string | null> {
     clearTimeout(timeout);
   }
 }
+
+/**
+ * Renders with retries; each attempt waits longer for hydration. Full-DOM HTML
+ * rendering is used when a renderer key is configured, otherwise the rendered
+ * content is retrieved in text form and converted back to parseable HTML.
+ */
+async function fetchRendered(url: string): Promise<string | null> {
+  const attempts: { wait: number; mode: "html" | "markdown" }[] = [
+    { wait: 0, mode: "html" },
+    { wait: 2500, mode: "markdown" },
+    { wait: 6000, mode: "markdown" },
+  ];
+  for (let i = 0; i < attempts.length; i++) {
+    const html = await renderOnce(url, attempts[i].wait, attempts[i].mode);
+    if (html) return html;
+    if (i < attempts.length - 1) await new Promise((r) => setTimeout(r, 1000));
+  }
+  return null;
+}
+
+
+/** Amount of real, visible body text a document exposes. */
+function bodyTextLength(html: string): number {
+  const body = new RegExp("<body\\b[^>]*>([\\s\\S]*?)<\\/body>", "i").exec(html)?.[1] ?? html;
+  return compactText(body).length;
+}
+
 
 /* ------------------------------------------------------------------ */
 /* HTML-only deterministic scoring                                     */
@@ -345,7 +416,8 @@ export async function crawlSite(rawUrl: string): Promise<Extracted> {
     }
   }
 
-  // Pass 3: headless rendering proxy.
+  // Pass 3: headless rendering (blocked pages).
+  let renderFailed = false;
   if (blockReason) {
     const rendered = await fetchRendered(url);
     if (rendered) {
@@ -355,8 +427,30 @@ export async function crawlSite(rawUrl: string): Promise<Extracted> {
         renderMode = "rendered";
         blockReason = null;
       }
+    } else {
+      renderFailed = true;
     }
   }
+
+  // Metadata (title/meta/canonical/JSON-LD) always comes from the origin's own
+  // document; rendered output is used for the visible body content.
+  const metaHtml = html;
+
+  // Pass 4: the origin responded fine but served a JavaScript app shell.
+  // Always render such pages so UX / CTA / conversion analysis sees the real DOM.
+  if (!blockReason && bodyTextLength(html) < 600) {
+
+    const rendered = await fetchRendered(url);
+    if (rendered && bodyTextLength(rendered) > bodyTextLength(html)) {
+      html = rendered;
+      renderMode = "rendered";
+      renderFailed = false;
+    } else {
+      renderFailed = true;
+    }
+  }
+
+
 
 
   const blocked = blockReason !== null;
@@ -437,7 +531,7 @@ export async function crawlSite(rawUrl: string): Promise<Extracted> {
   });
 
   const structuredData: any[] = [];
-  findElements(html, "script")
+  findElements(metaHtml, "script")
     .filter((el) => attrEquals(el.attrs, "type", "application/ld+json"))
     .forEach((el) => {
       try {
@@ -460,19 +554,28 @@ export async function crawlSite(rawUrl: string): Promise<Extracted> {
   const body = findElements(html, "body")[0]?.inner ?? html;
   const textSample = compactText(body).slice(0, 5000);
   const wordCount = textSample.split(/\s+/).filter(Boolean).length;
-  const title = compactText(findElements(html, "title")[0]?.inner ?? "") || null;
-  const canonicalHref = firstLinkHref(html, "canonical");
-  const iconHref = firstLinkHref(html, "icon") || firstLinkHref(html, "shortcut icon");
+  const title = compactText(findElements(metaHtml, "title")[0]?.inner ?? "") || null;
+  const canonicalHref = firstLinkHref(metaHtml, "canonical");
+  const iconHref = firstLinkHref(metaHtml, "icon") || firstLinkHref(metaHtml, "shortcut icon");
   const metadataSignals = [
     title,
-    firstMetaContent(html, "name", "description"),
-    firstMetaContent(html, "property", "og:title"),
-    firstMetaContent(html, "property", "og:description"),
+    firstMetaContent(metaHtml, "name", "description"),
+    firstMetaContent(metaHtml, "property", "og:title"),
+    firstMetaContent(metaHtml, "property", "og:description"),
   ].filter(Boolean).length;
-  const partial = !blocked && textSample.length < 200 && metadataSignals >= 2;
-  const captureWarning = partial
-    ? "The page is a JavaScript application. Metadata was analysed, but page-body, CTA and UX results may be incomplete."
-    : null;
+  const partial = !blocked && (textSample.length < 400 || wordCount < 120) && metadataSignals >= 1;
+  const captureWarning = blocked
+    ? null
+    : partial && renderFailed
+      ? "JavaScript rendering failed: the headless renderer could not load this page, so only metadata from the initial HTML response was analysed. UX, CTA, homepage-clarity and conversion findings are unavailable rather than estimated."
+      : partial
+        ? "The page is a JavaScript application and rendering returned little visible content. Metadata was analysed; page-body, CTA and UX results are partial."
+        : null;
+  const dataCoverage: Extracted["dataCoverage"] = {
+    metadata: blocked ? "unavailable" : "complete",
+    lighthouse: "complete", // resolved against the Lighthouse result in the report layer
+    pageBody: blocked ? "unavailable" : partial ? (renderFailed ? "unavailable" : "partial") : "complete",
+  };
 
   const base: Omit<Extracted, "htmlEstimate"> = {
     finalUrl,
@@ -480,14 +583,17 @@ export async function crawlSite(rawUrl: string): Promise<Extracted> {
     blocked,
     blockReason,
     partial,
+    renderFailed,
+    dataCoverage,
     captureWarning,
     renderMode,
+
     title,
     metaDescription:
-      firstMetaContent(html, "name", "description") ?? firstMetaContent(html, "property", "og:description"),
+      firstMetaContent(metaHtml, "name", "description") ?? firstMetaContent(metaHtml, "property", "og:description"),
     canonical: canonicalHref ? abs(canonicalHref) : null,
     favicon: abs(iconHref || "/favicon.ico"),
-    language: findTags(html, "html")[0]?.attrs.lang || null,
+    language: findTags(metaHtml, "html")[0]?.attrs.lang || null,
     headings: headings.slice(0, 40),
     h1Count: headings.filter((h) => h.tag === "h1").length,
     buttons: buttons.slice(0, 20),
@@ -497,9 +603,9 @@ export async function crawlSite(rawUrl: string): Promise<Extracted> {
     images: { total: imgs.length, missingAlt, samples: imageSamples },
     links: { internal, external, samples: linkSamples },
     structuredData: structuredData.slice(0, 5),
-    openGraph: collectPrefixedMeta(html, "og:"),
-    twitter: collectPrefixedMeta(html, "twitter:"),
-    hasViewport: findTags(html, "meta").some((tag) => attrEquals(tag.attrs, "name", "viewport")),
+    openGraph: collectPrefixedMeta(metaHtml, "og:"),
+    twitter: collectPrefixedMeta(metaHtml, "twitter:"),
+    hasViewport: findTags(metaHtml, "meta").some((tag) => attrEquals(tag.attrs, "name", "viewport")),
     hasRobots,
     hasSitemap,
     securityHeaders,
