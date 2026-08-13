@@ -235,19 +235,28 @@ async function fetchWithBrowserHeaders(url: string, referer?: string): Promise<{
 }
 
 /**
- * JS-rendering fallback. Playwright/Puppeteer cannot run in this serverless
- * runtime (no native browser binary), so we delegate rendering to a headless
- * rendering proxy that executes JS and returns the final HTML.
+ * Headless-browser rendering. Playwright/Puppeteer/Chromium cannot run inside
+ * this serverless runtime (no native browser binary and no subprocesses), so
+ * rendering is delegated to a remote headless-Chromium service that executes
+ * JavaScript, waits for the page to settle, and returns the final DOM.
+ * Works for React, Next.js, Vue, Angular and other client-rendered apps.
  */
-async function fetchRendered(url: string): Promise<string | null> {
+const RENDER_TIMEOUT_MS = 45000;
+
+async function renderOnce(url: string, waitMs: number): Promise<string | null> {
   const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS);
+  const timeout = setTimeout(() => controller.abort(), RENDER_TIMEOUT_MS);
   try {
-    const token = process.env.JINA_API_KEY;
+    const token = process.env["JINA_API_KEY"];
     const res = await fetch(`https://r.jina.ai/${url}`, {
       headers: {
         "x-return-format": "html",
-        "x-timeout": "25",
+        "x-timeout": "30",
+        "x-wait-for-selector": "body",
+        "x-target-selector": "body",
+        "x-engine": "browser",
+        "x-cache-tolerance": "0",
+        ...(waitMs ? { "x-wait-for-timeout": String(waitMs) } : {}),
         Accept: "text/html,*/*;q=0.8",
         ...(token ? { Authorization: `Bearer ${token}` } : {}),
       },
@@ -263,6 +272,24 @@ async function fetchRendered(url: string): Promise<string | null> {
     clearTimeout(timeout);
   }
 }
+
+/** Renders with retries; each attempt waits longer for hydration. */
+async function fetchRendered(url: string): Promise<string | null> {
+  const waits = [0, 2500, 6000];
+  for (let i = 0; i < waits.length; i++) {
+    const html = await renderOnce(url, waits[i]);
+    if (html) return html;
+    if (i < waits.length - 1) await new Promise((r) => setTimeout(r, 1000));
+  }
+  return null;
+}
+
+/** Amount of real, visible body text a document exposes. */
+function bodyTextLength(html: string): number {
+  const body = new RegExp("<body\\b[^>]*>([\\s\\S]*?)<\\/body>", "i").exec(html)?.[1] ?? html;
+  return compactText(body).length;
+}
+
 
 /* ------------------------------------------------------------------ */
 /* HTML-only deterministic scoring                                     */
