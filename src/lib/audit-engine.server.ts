@@ -558,7 +558,7 @@ export async function crawlSite(rawUrl: string): Promise<Extracted> {
     firstMetaContent(html, "property", "og:title"),
     firstMetaContent(html, "property", "og:description"),
   ].filter(Boolean).length;
-  const partial = !blocked && textSample.length < 400 && metadataSignals >= 1;
+  const partial = !blocked && (textSample.length < 400 || wordCount < 120) && metadataSignals >= 1;
   const captureWarning = blocked
     ? null
     : partial && renderFailed
