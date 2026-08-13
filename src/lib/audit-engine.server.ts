@@ -243,18 +243,51 @@ async function fetchWithBrowserHeaders(url: string, referer?: string): Promise<{
  */
 const RENDER_TIMEOUT_MS = 45000;
 
-async function renderOnce(url: string, waitMs: number): Promise<string | null> {
+function escapeHtml(v: string): string {
+  return v.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+}
+
+/** Converts the renderer's markdown output of the rendered DOM into parseable HTML. */
+function markdownToHtml(md: string): string {
+  const body = md
+    .replace(/^Title:.*$/im, "")
+    .replace(/^URL Source:.*$/im, "")
+    .replace(/^Warning:.*$/im, "")
+    .replace(/^Markdown Content:\s*/im, "");
+
+  const lines = body.split(/\r?\n/);
+  const out: string[] = [];
+  for (const line of lines) {
+    const t = line.trim();
+    if (!t) continue;
+    const heading = /^(#{1,6})\s+(.*)$/.exec(t);
+    if (heading) {
+      const level = heading[1].length;
+      out.push(`<h${level}>${escapeHtml(heading[2].replace(/[*_`]/g, ""))}</h${level}>`);
+      continue;
+    }
+    const withLinks = escapeHtml(t).replace(
+      /\[([^\]]*)\]\(([^)\s]+)[^)]*\)/g,
+      (_m, label: string, href: string) => `<a href="${href}">${label || href}</a>`,
+    );
+    out.push(`<p>${withLinks.replace(/[*_`]/g, "")}</p>`);
+  }
+  return `<html><body>${out.join("\n")}</body></html>`;
+}
+
+async function renderOnce(
+  url: string,
+  waitMs: number,
+  mode: "html" | "markdown",
+): Promise<string | null> {
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), RENDER_TIMEOUT_MS);
   try {
     const token = process.env["JINA_API_KEY"];
     const res = await fetch(`https://r.jina.ai/${url}`, {
       headers: {
-        "x-return-format": "html",
+        ...(mode === "html" ? { "x-return-format": "html", "x-engine": "browser" } : {}),
         "x-timeout": "30",
-        "x-wait-for-selector": "body",
-        "x-target-selector": "body",
-        "x-engine": "browser",
         "x-cache-tolerance": "0",
         ...(waitMs ? { "x-wait-for-timeout": String(waitMs) } : {}),
         Accept: "text/html,*/*;q=0.8",
@@ -263,8 +296,10 @@ async function renderOnce(url: string, waitMs: number): Promise<string | null> {
       signal: controller.signal,
     });
     if (!res.ok) return null;
-    const html = await res.text();
-    if (!html || compactText(html).length < 200) return null;
+    const text = await res.text();
+    if (!text) return null;
+    const html = mode === "html" ? text : markdownToHtml(text);
+    if (compactText(html).length < 200) return null;
     return html;
   } catch {
     return null;
@@ -273,16 +308,25 @@ async function renderOnce(url: string, waitMs: number): Promise<string | null> {
   }
 }
 
-/** Renders with retries; each attempt waits longer for hydration. */
+/**
+ * Renders with retries; each attempt waits longer for hydration. Full-DOM HTML
+ * rendering is used when a renderer key is configured, otherwise the rendered
+ * content is retrieved in text form and converted back to parseable HTML.
+ */
 async function fetchRendered(url: string): Promise<string | null> {
-  const waits = [0, 2500, 6000];
-  for (let i = 0; i < waits.length; i++) {
-    const html = await renderOnce(url, waits[i]);
+  const attempts: { wait: number; mode: "html" | "markdown" }[] = [
+    { wait: 0, mode: "html" },
+    { wait: 2500, mode: "markdown" },
+    { wait: 6000, mode: "markdown" },
+  ];
+  for (let i = 0; i < attempts.length; i++) {
+    const html = await renderOnce(url, attempts[i].wait, attempts[i].mode);
     if (html) return html;
-    if (i < waits.length - 1) await new Promise((r) => setTimeout(r, 1000));
+    if (i < attempts.length - 1) await new Promise((r) => setTimeout(r, 1000));
   }
   return null;
 }
+
 
 /** Amount of real, visible body text a document exposes. */
 function bodyTextLength(html: string): number {
