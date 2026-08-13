@@ -430,14 +430,16 @@ export async function crawlSite(rawUrl: string): Promise<Extracted> {
     } else {
       renderFailed = true;
     }
+  }
+
   // Metadata (title/meta/canonical/JSON-LD) always comes from the origin's own
   // document; rendered output is used for the visible body content.
   const metaHtml = html;
 
   // Pass 4: the origin responded fine but served a JavaScript app shell.
-
   // Always render such pages so UX / CTA / conversion analysis sees the real DOM.
   if (!blockReason && bodyTextLength(html) < 600) {
+
     const rendered = await fetchRendered(url);
     if (rendered && bodyTextLength(rendered) > bodyTextLength(html)) {
       html = rendered;
