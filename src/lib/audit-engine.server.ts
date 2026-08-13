@@ -514,10 +514,19 @@ export async function crawlSite(rawUrl: string): Promise<Extracted> {
     firstMetaContent(html, "property", "og:title"),
     firstMetaContent(html, "property", "og:description"),
   ].filter(Boolean).length;
-  const partial = !blocked && textSample.length < 200 && metadataSignals >= 2;
-  const captureWarning = partial
-    ? "The page is a JavaScript application. Metadata was analysed, but page-body, CTA and UX results may be incomplete."
-    : null;
+  const partial = !blocked && textSample.length < 400 && metadataSignals >= 1;
+  const captureWarning = blocked
+    ? null
+    : partial && renderFailed
+      ? "JavaScript rendering failed: the headless renderer could not load this page, so only metadata from the initial HTML response was analysed. UX, CTA, homepage-clarity and conversion findings are unavailable rather than estimated."
+      : partial
+        ? "The page is a JavaScript application and rendering returned little visible content. Metadata was analysed; page-body, CTA and UX results are partial."
+        : null;
+  const dataCoverage: Extracted["dataCoverage"] = {
+    metadata: blocked ? "unavailable" : "complete",
+    lighthouse: "complete", // resolved against the Lighthouse result in the report layer
+    pageBody: blocked ? "unavailable" : partial ? (renderFailed ? "unavailable" : "partial") : "complete",
+  };
 
   const base: Omit<Extracted, "htmlEstimate"> = {
     finalUrl,
@@ -525,8 +534,11 @@ export async function crawlSite(rawUrl: string): Promise<Extracted> {
     blocked,
     blockReason,
     partial,
+    renderFailed,
+    dataCoverage,
     captureWarning,
     renderMode,
+
     title,
     metaDescription:
       firstMetaContent(html, "name", "description") ?? firstMetaContent(html, "property", "og:description"),
