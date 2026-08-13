@@ -12,6 +12,14 @@ export interface Extracted {
   blockReason: string | null;
   /** True when useful metadata was captured but the page body requires client-side JavaScript. */
   partial: boolean;
+  /** True when the headless renderer could not produce a usable DOM. */
+  renderFailed?: boolean;
+  /** Which parts of the audit are based on complete data. */
+  dataCoverage?: {
+    metadata: "complete" | "partial" | "unavailable";
+    lighthouse: "complete" | "partial" | "unavailable";
+    pageBody: "complete" | "partial" | "unavailable";
+  };
   captureWarning: string | null;
   /** "static" = plain fetch, "rendered" = fetched through a JS-rendering proxy. */
   renderMode: "static" | "rendered";
