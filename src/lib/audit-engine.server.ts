@@ -531,7 +531,7 @@ export async function crawlSite(rawUrl: string): Promise<Extracted> {
   });
 
   const structuredData: any[] = [];
-  findElements(html, "script")
+  findElements(metaHtml, "script")
     .filter((el) => attrEquals(el.attrs, "type", "application/ld+json"))
     .forEach((el) => {
       try {
@@ -554,14 +554,14 @@ export async function crawlSite(rawUrl: string): Promise<Extracted> {
   const body = findElements(html, "body")[0]?.inner ?? html;
   const textSample = compactText(body).slice(0, 5000);
   const wordCount = textSample.split(/\s+/).filter(Boolean).length;
-  const title = compactText(findElements(html, "title")[0]?.inner ?? "") || null;
-  const canonicalHref = firstLinkHref(html, "canonical");
-  const iconHref = firstLinkHref(html, "icon") || firstLinkHref(html, "shortcut icon");
+  const title = compactText(findElements(metaHtml, "title")[0]?.inner ?? "") || null;
+  const canonicalHref = firstLinkHref(metaHtml, "canonical");
+  const iconHref = firstLinkHref(metaHtml, "icon") || firstLinkHref(metaHtml, "shortcut icon");
   const metadataSignals = [
     title,
-    firstMetaContent(html, "name", "description"),
-    firstMetaContent(html, "property", "og:title"),
-    firstMetaContent(html, "property", "og:description"),
+    firstMetaContent(metaHtml, "name", "description"),
+    firstMetaContent(metaHtml, "property", "og:title"),
+    firstMetaContent(metaHtml, "property", "og:description"),
   ].filter(Boolean).length;
   const partial = !blocked && (textSample.length < 400 || wordCount < 120) && metadataSignals >= 1;
   const captureWarning = blocked
@@ -590,10 +590,10 @@ export async function crawlSite(rawUrl: string): Promise<Extracted> {
 
     title,
     metaDescription:
-      firstMetaContent(html, "name", "description") ?? firstMetaContent(html, "property", "og:description"),
+      firstMetaContent(metaHtml, "name", "description") ?? firstMetaContent(metaHtml, "property", "og:description"),
     canonical: canonicalHref ? abs(canonicalHref) : null,
     favicon: abs(iconHref || "/favicon.ico"),
-    language: findTags(html, "html")[0]?.attrs.lang || null,
+    language: findTags(metaHtml, "html")[0]?.attrs.lang || null,
     headings: headings.slice(0, 40),
     h1Count: headings.filter((h) => h.tag === "h1").length,
     buttons: buttons.slice(0, 20),
@@ -603,9 +603,9 @@ export async function crawlSite(rawUrl: string): Promise<Extracted> {
     images: { total: imgs.length, missingAlt, samples: imageSamples },
     links: { internal, external, samples: linkSamples },
     structuredData: structuredData.slice(0, 5),
-    openGraph: collectPrefixedMeta(html, "og:"),
-    twitter: collectPrefixedMeta(html, "twitter:"),
-    hasViewport: findTags(html, "meta").some((tag) => attrEquals(tag.attrs, "name", "viewport")),
+    openGraph: collectPrefixedMeta(metaHtml, "og:"),
+    twitter: collectPrefixedMeta(metaHtml, "twitter:"),
+    hasViewport: findTags(metaHtml, "meta").some((tag) => attrEquals(tag.attrs, "name", "viewport")),
     hasRobots,
     hasSitemap,
     securityHeaders,
