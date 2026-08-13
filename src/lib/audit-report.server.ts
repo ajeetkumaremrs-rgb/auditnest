@@ -121,7 +121,7 @@ function buildWarnings(extracted: Extracted, lighthouse: LighthouseSummary): str
     warnings.push(extracted.captureWarning);
   }
   if (extracted.renderMode === "rendered") {
-    warnings.push("The page required JavaScript rendering; content was captured via a headless renderer.");
+    warnings.push("The page required JavaScript rendering; content was captured with a headless browser.");
   }
   if (lighthouse.error) {
     warnings.push(
@@ -130,8 +130,16 @@ function buildWarnings(extracted: Extracted, lighthouse: LighthouseSummary): str
         : `Lighthouse unavailable: ${lighthouse.error}`,
     );
   }
+  const cov = extracted.dataCoverage;
+  if (cov) {
+    const lh = lighthouse.error ? "unavailable" : "complete";
+    warnings.push(
+      `Data coverage — metadata: ${cov.metadata}; page body (UX/CTA/conversion): ${cov.pageBody}; Lighthouse metrics: ${lh}.`,
+    );
+  }
   return warnings;
 }
+
 
 /** Report used when the site blocked us — no fabricated SEO/UX/CTA analysis. */
 function blockedReport(extracted: Extracted, lighthouse: LighthouseSummary): AuditReport {
