@@ -75,6 +75,19 @@ export interface LighthouseSummary {
   apiKeyUsed?: boolean;
 }
 
+export interface ScoreComponent {
+  key: string;
+  label: string;
+  /** Null when the underlying data was not available — never guessed. */
+  value: number | null;
+  weight: number;
+  /** Exact data source used to produce this score. */
+  source: string;
+  /** Individual measured inputs that fed the score. */
+  inputs: string[];
+  status: "measured" | "derived" | "unavailable";
+}
+
 export type Priority = "high" | "medium" | "low";
 
 export interface Recommendation {
@@ -99,6 +112,8 @@ export interface AuditReport {
   overallScore: number | null;
   /** Explains exactly which data the score was computed from. */
   scoreBasis: string;
+  /** Per-component scores with their data provenance. */
+  scoreBreakdown?: ScoreComponent[];
   /** User-facing warnings, e.g. crawler blocked or PageSpeed rate limited. */
   warnings: string[];
   summary: string;
