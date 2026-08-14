@@ -3,7 +3,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useServerFn } from "@tanstack/react-start";
 import { toast } from "sonner";
 import { getAudit, runAudit } from "@/lib/audit.functions";
-import type { AuditReport, Extracted, LighthouseSummary, Priority } from "@/lib/audit-shared";
+import type { AuditReport, Extracted, LighthouseSummary, Priority, ScoreComponent } from "@/lib/audit-shared";
 import { Card } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -140,6 +140,48 @@ function ReportView({
       </Card>
 
 
+      {report.scoreBreakdown && report.scoreBreakdown.length > 0 && (
+        <>
+          <Section title="Component scores">
+            <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+              {report.scoreBreakdown.map((c) => (
+                <ComponentScoreCard key={c.key} c={c} />
+              ))}
+            </div>
+          </Section>
+
+          <Section title="Score calculation & data provenance">
+            <p className="mb-4 text-sm text-muted-foreground">{report.scoreBasis}</p>
+            <div className="space-y-3">
+              {report.scoreBreakdown.map((c) => (
+                <div key={c.key} className="rounded-lg border p-4 text-sm">
+                  <div className="flex flex-wrap items-center justify-between gap-2 mb-1">
+                    <span className="font-medium">{c.label}</span>
+                    <span className="flex items-center gap-2">
+                      <Badge variant="secondary">{c.status}</Badge>
+                      <span className="text-muted-foreground text-xs">
+                        weight {Math.round(c.weight * 100)}%
+                      </span>
+                      <span className="font-semibold">{c.value ?? "Unavailable"}</span>
+                    </span>
+                  </div>
+                  <p className="text-muted-foreground text-xs">Source: {c.source}</p>
+                  {c.inputs.length > 0 && (
+                    <ul className="mt-2 grid md:grid-cols-2 gap-x-4 gap-y-1 text-xs text-muted-foreground list-disc pl-5">
+                      {c.inputs.map((x, i) => <li key={i}>{x}</li>)}
+                    </ul>
+                  )}
+                </div>
+              ))}
+            </div>
+            <p className="mt-4 text-xs text-muted-foreground">
+              Components marked "Unavailable" are excluded and the remaining weights are renormalised,
+              so no score is ever guessed or filled with a default value.
+            </p>
+          </Section>
+        </>
+      )}
+
       {lighthouse && (
         <Section title="PageSpeed Insights (Lighthouse)">
           <p className="mb-3 text-sm text-muted-foreground">
@@ -164,12 +206,15 @@ function ReportView({
             <MetricCard label="Best Practices" score={lighthouse.bestPractices} />
           </div>
           <div className="mt-4 grid grid-cols-2 md:grid-cols-3 gap-3 text-sm">
-            {Object.entries(lighthouse.metrics).map(([k, v]) => (
-              <div key={k} className="rounded-lg bg-muted p-3">
-                <div className="text-xs uppercase text-muted-foreground tracking-wider">{k}</div>
-                <div className="font-medium">{v ?? "—"}</div>
-              </div>
-            ))}
+            {LIGHTHOUSE_METRICS.map(({ key, label }) => {
+              const v = lighthouse.metrics[key];
+              return (
+                <div key={key} className="rounded-lg bg-muted p-3">
+                  <div className="text-xs uppercase text-muted-foreground tracking-wider">{label}</div>
+                  <div className={`font-medium ${v ? "" : "text-muted-foreground"}`}>{v ?? "Unavailable"}</div>
+                </div>
+              );
+            })}
           </div>
           {lighthouse.error && (
             <p className="mt-3 text-xs text-muted-foreground">Note: {lighthouse.error}</p>
@@ -279,6 +324,28 @@ function ReportView({
         </Section>
       )}
     </>
+  );
+}
+
+const LIGHTHOUSE_METRICS: { key: keyof LighthouseSummary["metrics"]; label: string }[] = [
+  { key: "fcp", label: "FCP — First Contentful Paint" },
+  { key: "lcp", label: "LCP — Largest Contentful Paint" },
+  { key: "cls", label: "CLS — Cumulative Layout Shift" },
+  { key: "tbt", label: "TBT — Total Blocking Time" },
+  { key: "tti", label: "TTI — Time to Interactive" },
+  { key: "si", label: "SI — Speed Index" },
+];
+
+function ComponentScoreCard({ c }: { c: ScoreComponent }) {
+  const color =
+    c.value === null ? "text-muted-foreground" : c.value >= 80 ? "text-success" : c.value >= 50 ? "text-warning-foreground" : "text-destructive";
+  return (
+    <div className="rounded-lg border p-4 text-center">
+      <div className="text-xs uppercase tracking-wider text-muted-foreground mb-1">{c.label}</div>
+      <div className={`font-display font-semibold ${c.value === null ? "text-sm pt-2" : "text-3xl"} ${color}`}>
+        {c.value ?? "Unavailable"}
+      </div>
+    </div>
   );
 }
 
