@@ -143,7 +143,7 @@ function buildWarnings(extracted: Extracted, lighthouse: LighthouseSummary): str
 
 /** Report used when the site blocked us — no fabricated SEO/UX/CTA analysis. */
 function blockedReport(extracted: Extracted, lighthouse: LighthouseSummary): AuditReport {
-  const { score, basis } = computeOverallScore(extracted, lighthouse);
+  const { score, basis, breakdown } = computeOverallScore(extracted, lighthouse);
   const na = "Not analysed — the site blocked automated access.";
   const lighthouseOk =
     !lighthouse.error &&
@@ -153,6 +153,7 @@ function blockedReport(extracted: Extracted, lighthouse: LighthouseSummary): Aud
   return {
     overallScore: score,
     scoreBasis: basis,
+    scoreBreakdown: breakdown,
     warnings: buildWarnings(extracted, lighthouse),
     summary:
       `We could not read the real content of ${extracted.finalUrl}. ${extracted.blockReason ?? "The origin served an anti-bot page."} ` +
@@ -262,11 +263,12 @@ Do not output any numeric score — scores are computed separately from measured
   if (!ai.summary) ai.summary = "The AI narrative was incomplete; measured data is shown below.";
 
 
-  const { score, basis } = computeOverallScore(extracted, lighthouse);
+  const { score, basis, breakdown } = computeOverallScore(extracted, lighthouse);
 
   return {
     overallScore: score,
     scoreBasis: basis,
+    scoreBreakdown: breakdown,
     warnings: buildWarnings(extracted, lighthouse),
     summary: ai.summary,
     homepageClarity: ai.homepageClarity,
