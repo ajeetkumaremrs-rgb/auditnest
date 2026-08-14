@@ -728,34 +728,161 @@ function empty(error: string, attempts: number, apiKeyUsed = false): LighthouseS
 /* Deterministic overall score                                         */
 /* ------------------------------------------------------------------ */
 
+/** Deterministic UX score from crawled page-body signals. Null when body unavailable. */
+function uxScore(e: Extracted): { value: number | null; inputs: string[] } {
+  if (e.blocked || e.partial) return { value: null, inputs: [] };
+  let v = 100;
+  const inputs: string[] = [];
+  const hit = (cond: boolean, pts: number, why: string) => {
+    inputs.push(`${why}: ${cond ? `-${pts}` : "0"}`);
+    if (cond) v -= pts;
+  };
+  hit(e.h1Count === 0, 12, `H1 headings (${e.h1Count})`);
+  hit(e.headings.length < 3, 8, `total headings (${e.headings.length})`);
+  hit(e.wordCount < 300, 10, `word count (${e.wordCount})`);
+  hit(e.navLinks.length < 3, 10, `nav links (${e.navLinks.length})`);
+  hit(!e.hasViewport, 12, `responsive viewport (${e.hasViewport ? "present" : "missing"})`);
+  hit(e.buttons.length + e.ctas.length === 0, 10, `interactive elements (${e.buttons.length + e.ctas.length})`);
+  return { value: clamp(v), inputs };
+}
+
+const GENERIC_CTA = /^(click here|submit|learn more|read more|more|go|here)$/i;
+
+/** Deterministic CTA score from crawled CTA/button/form signals. */
+function ctaScore(e: Extracted): { value: number | null; inputs: string[] } {
+  if (e.blocked || e.partial) return { value: null, inputs: [] };
+  let v = 100;
+  const inputs: string[] = [];
+  const hit = (cond: boolean, pts: number, why: string) => {
+    inputs.push(`${why}: ${cond ? `-${pts}` : "0"}`);
+    if (cond) v -= pts;
+  };
+  const generic = e.ctas.filter((c) => GENERIC_CTA.test(c.trim())).length;
+  hit(e.ctas.length === 0, 45, `detected CTAs (${e.ctas.length})`);
+  hit(e.ctas.length === 1, 12, `CTA repetition (${e.ctas.length})`);
+  hit(e.forms.length === 0, 15, `forms on page (${e.forms.length})`);
+  hit(generic > 0, 10, `generic CTA wording (${generic})`);
+  return { value: clamp(v), inputs };
+}
+
+/** Deterministic conversion score from crawled conversion-path signals. */
+function conversionScore(e: Extracted): { value: number | null; inputs: string[] } {
+  if (e.blocked || e.partial) return { value: null, inputs: [] };
+  let v = 100;
+  const inputs: string[] = [];
+  const hit = (cond: boolean, pts: number, why: string) => {
+    inputs.push(`${why}: ${cond ? `-${pts}` : "0"}`);
+    if (cond) v -= pts;
+  };
+  hit(e.ctas.length === 0, 25, `CTAs (${e.ctas.length})`);
+  hit(e.forms.length === 0, 20, `lead capture forms (${e.forms.length})`);
+  hit(e.structuredData.length === 0, 10, `structured data blocks (${e.structuredData.length})`);
+  hit(!e.metaDescription, 5, `meta description (${e.metaDescription ? "present" : "missing"})`);
+  hit(e.links.internal < 5, 10, `internal links (${e.links.internal})`);
+  hit(e.wordCount < 300, 10, `page copy length (${e.wordCount} words)`);
+  return { value: clamp(v), inputs };
+}
+
 export function computeOverallScore(
   extracted: Extracted,
   lighthouse: LighthouseSummary,
-): { score: number | null; basis: string } {
+): { score: number | null; basis: string; breakdown: ScoreComponent[] } {
+  const estimatePrefix = extracted.partial ? "captured metadata" : "crawled HTML";
+  const ux = uxScore(extracted);
+  const cta = ctaScore(extracted);
+  const conv = conversionScore(extracted);
+
+  const unavailable = (reason: string) => `Unavailable — ${reason}`;
+  const bodyReason = extracted.blocked
+    ? "the site blocked automated access"
+    : "the page body required JavaScript and could not be captured";
+
+  const make = (
+    key: string,
+    label: string,
+    value: number | null,
+    weight: number,
+    source: string,
+    inputs: string[],
+    status: ScoreComponent["status"],
+  ): ScoreComponent => ({ key, label, value, weight, source, inputs, status });
+
+  const lhSource = (metric: string) =>
+    `Google PageSpeed Insights (Lighthouse, ${lighthouse.strategy}) — ${metric} category score`;
+
+  const breakdown: ScoreComponent[] = [
+    make(
+      "performance",
+      "Performance",
+      lighthouse.performance,
+      0.22,
+      lighthouse.performance != null
+        ? lhSource("performance")
+        : unavailable(lighthouse.error ?? "Lighthouse returned no performance score"),
+      lighthouse.performance != null
+        ? Object.entries(lighthouse.metrics).map(([k, val]) => `${k.toUpperCase()}: ${val ?? "n/a"}`)
+        : [],
+      lighthouse.performance != null ? "measured" : "unavailable",
+    ),
+  ];
+
+  const lhOrHtml = (
+    key: string,
+    label: string,
+    lh: number | null,
+    est: number | null,
+    weight: number,
+  ) => {
+    if (extracted.blocked) {
+      breakdown.push(
+        make(key, label, lh, weight, lh != null ? lhSource(label.toLowerCase()) : unavailable(bodyReason), [], lh != null ? "measured" : "unavailable"),
+      );
+      return;
+    }
+    if (lh != null) {
+      breakdown.push(make(key, label, lh, weight, lhSource(label.toLowerCase()), [], "measured"));
+    } else if (est != null) {
+      breakdown.push(
+        make(key, label, est, weight, `Deterministic rules over ${estimatePrefix} (Lighthouse category unavailable)`, [], "derived"),
+      );
+    } else {
+      breakdown.push(make(key, label, null, weight, unavailable("no signal collected"), [], "unavailable"));
+    }
+  };
+
+  lhOrHtml("accessibility", "Accessibility", lighthouse.accessibility, extracted.htmlEstimate.accessibility, 0.18);
+  lhOrHtml("seo", "SEO", lighthouse.seo, extracted.htmlEstimate.seo, 0.18);
+  lhOrHtml("bestPractices", "Best Practices", lighthouse.bestPractices, extracted.htmlEstimate.bestPractices, 0.12);
+
+  breakdown.push(
+    make("ux", "UX", ux.value, 0.1, ux.value != null ? "Deterministic rules over crawled DOM structure" : unavailable(bodyReason), ux.inputs, ux.value != null ? "derived" : "unavailable"),
+    make("cta", "CTA", cta.value, 0.1, cta.value != null ? "Deterministic rules over crawled CTAs, buttons and forms" : unavailable(bodyReason), cta.inputs, cta.value != null ? "derived" : "unavailable"),
+    make("conversion", "Conversion", conv.value, 0.1, conv.value != null ? "Deterministic rules over crawled conversion-path signals" : unavailable(bodyReason), conv.inputs, conv.value != null ? "derived" : "unavailable"),
+  );
+
   if (extracted.blocked) {
     return {
       score: null,
       basis:
-        "No score assigned: the site blocked automated access, so no reliable page data could be collected.",
+        "No overall score assigned: the site blocked automated access, so no reliable page data could be collected.",
+      breakdown,
     };
   }
 
-  const parts: { value: number; weight: number; label: string }[] = [];
-  const push = (value: number | null | undefined, weight: number, label: string) => {
-    if (typeof value === "number") parts.push({ value, weight, label });
-  };
-
-  push(lighthouse.performance, 0.3, "Lighthouse performance");
-  const estimatePrefix = extracted.partial ? "captured metadata" : "HTML";
-  push(lighthouse.accessibility ?? extracted.htmlEstimate.accessibility, 0.25, lighthouse.accessibility != null ? "Lighthouse accessibility" : `${estimatePrefix} accessibility estimate`);
-  push(lighthouse.seo ?? extracted.htmlEstimate.seo, 0.25, lighthouse.seo != null ? "Lighthouse SEO" : `${estimatePrefix} SEO estimate`);
-  push(lighthouse.bestPractices ?? extracted.htmlEstimate.bestPractices, 0.2, lighthouse.bestPractices != null ? "Lighthouse best practices" : `${estimatePrefix} best-practices estimate`);
-
-  if (parts.length === 0) {
-    return { score: null, basis: "No score assigned: no measurable signals were collected." };
+  const scored = breakdown.filter((b) => typeof b.value === "number");
+  if (scored.length === 0) {
+    return { score: null, basis: "No overall score assigned: no measurable signals were collected.", breakdown };
   }
 
-  const totalWeight = parts.reduce((s, p) => s + p.weight, 0);
-  const score = clamp(parts.reduce((s, p) => s + p.value * p.weight, 0) / totalWeight);
-  return { score, basis: `Score computed from: ${parts.map((p) => `${p.label} (${p.value})`).join(", ")}.` };
+  const totalWeight = scored.reduce((s, p) => s + p.weight, 0);
+  const score = clamp(scored.reduce((s, p) => s + (p.value as number) * p.weight, 0) / totalWeight);
+  const formula = scored
+    .map((p) => `${p.label} ${p.value} × ${(p.weight / totalWeight).toFixed(2)}`)
+    .join(" + ");
+  return {
+    score,
+    basis: `Weighted average of ${scored.length} verified component score${scored.length === 1 ? "" : "s"} (weights renormalised over available data): ${formula} = ${score}.`,
+    breakdown,
+  };
 }
+
