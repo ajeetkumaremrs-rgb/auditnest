@@ -164,6 +164,10 @@ function ReportView({
             {report.scoreBasis && (
               <p className="mt-3 text-xs text-muted-foreground">{report.scoreBasis}</p>
             )}
+            <Button className="mt-5 w-full sm:w-auto" onClick={handleDownload} disabled={downloading}>
+              {downloading ? <Loader2 className="h-4 w-4 animate-spin" /> : <Download className="h-4 w-4" />}
+              <span className="ml-2">{downloading ? "Preparing PDF…" : "Download Report"}</span>
+            </Button>
           </div>
         </div>
       </Card>
