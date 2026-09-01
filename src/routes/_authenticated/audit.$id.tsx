@@ -97,7 +97,15 @@ function AuditView() {
           </Card>
         )}
 
-        {report && <ReportView report={report} lighthouse={lighthouse} extracted={extracted} />}
+        {report && (
+          <ReportView
+            report={report}
+            lighthouse={lighthouse}
+            extracted={extracted}
+            url={url}
+            createdAt={data.created_at}
+          />
+        )}
       </main>
     </div>
   );
