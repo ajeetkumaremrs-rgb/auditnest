@@ -7,7 +7,8 @@ import type { AuditReport, Extracted, LighthouseSummary, Priority, ScoreComponen
 import { Card } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { ArrowLeft, ExternalLink, Loader2, AlertTriangle, RotateCw } from "lucide-react";
+import { ArrowLeft, ExternalLink, Loader2, AlertTriangle, RotateCw, Download } from "lucide-react";
+import { useState } from "react";
 
 
 export const Route = createFileRoute("/_authenticated/audit/$id")({
