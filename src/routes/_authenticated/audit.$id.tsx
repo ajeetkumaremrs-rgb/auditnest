@@ -116,11 +116,32 @@ function ReportView({
   report,
   lighthouse,
   extracted,
+  url,
+  createdAt,
 }: {
   report: AuditReport;
   lighthouse: LighthouseSummary | null;
   extracted: Extracted | null;
+  url: string;
+  createdAt: string;
 }) {
+  const [downloading, setDownloading] = useState(false);
+
+  const handleDownload = async () => {
+    setDownloading(true);
+    try {
+      const { downloadAuditPdf } = await import("@/lib/audit-pdf");
+      await downloadAuditPdf({ url, createdAt, report, lighthouse, extracted });
+      toast.success("Report downloaded");
+    } catch (e) {
+      toast.error(
+        `Could not generate the PDF: ${e instanceof Error ? e.message : "unknown error"}. Please try again.`,
+      );
+    } finally {
+      setDownloading(false);
+    }
+  };
+
   return (
     <>
       {report.warnings?.length > 0 && (
