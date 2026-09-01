@@ -7,7 +7,8 @@ import type { AuditReport, Extracted, LighthouseSummary, Priority, ScoreComponen
 import { Card } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { ArrowLeft, ExternalLink, Loader2, AlertTriangle, RotateCw } from "lucide-react";
+import { ArrowLeft, ExternalLink, Loader2, AlertTriangle, RotateCw, Download } from "lucide-react";
+import { useState } from "react";
 
 
 export const Route = createFileRoute("/_authenticated/audit/$id")({
@@ -97,7 +98,15 @@ function AuditView() {
           </Card>
         )}
 
-        {report && <ReportView report={report} lighthouse={lighthouse} extracted={extracted} />}
+        {report && (
+          <ReportView
+            report={report}
+            lighthouse={lighthouse}
+            extracted={extracted}
+            url={url}
+            createdAt={data.created_at}
+          />
+        )}
       </main>
     </div>
   );
@@ -108,11 +117,32 @@ function ReportView({
   report,
   lighthouse,
   extracted,
+  url,
+  createdAt,
 }: {
   report: AuditReport;
   lighthouse: LighthouseSummary | null;
   extracted: Extracted | null;
+  url: string;
+  createdAt: string;
 }) {
+  const [downloading, setDownloading] = useState(false);
+
+  const handleDownload = async () => {
+    setDownloading(true);
+    try {
+      const { downloadAuditPdf } = await import("@/lib/audit-pdf");
+      await downloadAuditPdf({ url, createdAt, report, lighthouse, extracted });
+      toast.success("Report downloaded");
+    } catch (e) {
+      toast.error(
+        `Could not generate the PDF: ${e instanceof Error ? e.message : "unknown error"}. Please try again.`,
+      );
+    } finally {
+      setDownloading(false);
+    }
+  };
+
   return (
     <>
       {report.warnings?.length > 0 && (
@@ -135,6 +165,10 @@ function ReportView({
             {report.scoreBasis && (
               <p className="mt-3 text-xs text-muted-foreground">{report.scoreBasis}</p>
             )}
+            <Button className="mt-5 w-full sm:w-auto" onClick={handleDownload} disabled={downloading}>
+              {downloading ? <Loader2 className="h-4 w-4 animate-spin" /> : <Download className="h-4 w-4" />}
+              <span className="ml-2">{downloading ? "Preparing PDF…" : "Download Report"}</span>
+            </Button>
           </div>
         </div>
       </Card>
