@@ -165,7 +165,7 @@ export async function downloadAuditPdf(input: PdfInput) {
     for (const level of ["high", "medium", "low"] as const) {
       const group = recs.filter((r) => r.priority === level);
       if (!group.length) continue;
-      ensure(30);
+      ensure(110);
       text(`${level.toUpperCase()} severity (${group.length})`, { size: 11, bold: true, gap: 2 });
       group.forEach((r, i) => {
         ensure(60);
