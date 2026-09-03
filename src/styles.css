@@ -94,17 +94,27 @@
 @layer base {
   * {
     border-color: var(--color-border);
+    box-sizing: border-box;
+    min-width: 0;
+  }
+  html, body {
+    max-width: 100%;
+    overflow-x: hidden;
   }
   body {
     background-color: var(--color-background);
     color: var(--color-foreground);
     font-family: var(--font-sans);
     -webkit-font-smoothing: antialiased;
+    overflow-wrap: anywhere;
+    word-break: break-word;
   }
   h1, h2, h3, h4, h5 {
     font-family: var(--font-display);
     letter-spacing: -0.02em;
+    overflow-wrap: anywhere;
   }
+
 }
 
 @utility gradient-hero {
