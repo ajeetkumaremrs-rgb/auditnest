@@ -34,7 +34,9 @@
   --color-ring: var(--ring);
   --font-sans: "Inter", ui-sans-serif, system-ui, sans-serif;
   --font-display: "Space Grotesk", ui-sans-serif, system-ui, sans-serif;
+  --breakpoint-xs: 24rem;
 }
+
 
 :root {
   --radius: 0.75rem;
