@@ -270,9 +270,10 @@ function scoreCards(
             }
           } else {
             setFont(doc, 22, true, toneFor(c.it.value));
+            const numW = doc.getTextWidth(String(c.it.value));
             doc.text(String(c.it.value), x + 8, ty + 18);
             setFont(doc, 8.5, false, SOFT);
-            doc.text(band(c.it.value) ?? "", x + 8 + doc.getTextWidth(String(c.it.value)) + 8, ty + 18);
+            doc.text(band(c.it.value) ?? "", x + 8 + numW + 7, ty + 17);
           }
         });
         cy += rowH + 10;
@@ -292,7 +293,6 @@ function issueCard(doc: Doc, r: Recommendation, index?: number): Block {
   const titlePrefix = index !== undefined ? `${index}. ` : "";
   const titleLines = wrap(doc, titlePrefix + r.problem, 11.5, true, innerW - badgeW - 8);
   const fields: { k: string; v: string }[] = [
-    { k: "What we found", v: r.problem },
     { k: "Why it matters", v: r.why },
     { k: "Recommended fix", v: r.fix },
     { k: "Expected impact", v: r.impact },
