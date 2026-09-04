@@ -54,6 +54,15 @@ interface Block {
   keepWithNext?: boolean;
 }
 
+const REWRITE_LABELS: Record<string, string> = {
+  headline: "Headline",
+  cta: "Call to action",
+  hero: "Hero section",
+  pricing: "Pricing",
+  features: "Features",
+  testimonials: "Testimonials",
+};
+
 export async function downloadAuditPdf(input: PdfInput) {
   const { jsPDF } = await import("jspdf");
   const doc: Doc = new jsPDF({ unit: "pt", format: "a4", compress: true });
@@ -270,9 +279,10 @@ function scoreCards(
             }
           } else {
             setFont(doc, 22, true, toneFor(c.it.value));
+            const numW = doc.getTextWidth(String(c.it.value));
             doc.text(String(c.it.value), x + 8, ty + 18);
             setFont(doc, 8.5, false, SOFT);
-            doc.text(band(c.it.value) ?? "", x + 8 + doc.getTextWidth(String(c.it.value)) + 8, ty + 18);
+            doc.text(band(c.it.value) ?? "", x + 8 + numW + 7, ty + 17);
           }
         });
         cy += rowH + 10;
@@ -292,7 +302,6 @@ function issueCard(doc: Doc, r: Recommendation, index?: number): Block {
   const titlePrefix = index !== undefined ? `${index}. ` : "";
   const titleLines = wrap(doc, titlePrefix + r.problem, 11.5, true, innerW - badgeW - 8);
   const fields: { k: string; v: string }[] = [
-    { k: "What we found", v: r.problem },
     { k: "Why it matters", v: r.why },
     { k: "Recommended fix", v: r.fix },
     { k: "Expected impact", v: r.impact },
@@ -302,7 +311,7 @@ function issueCard(doc: Doc, r: Recommendation, index?: number): Block {
     lines: wrap(doc, f.v, 9.8, false, innerW - 8),
   }));
 
-  const bodyH = fieldLines.reduce((a, f) => a + 11 + f.lines.length * 13 + 5, 0);
+  const bodyH = fieldLines.reduce((a, f) => a + 11 + f.lines.length * 13 + 5, 0) - 5;
   const h = pad + Math.max(titleLines.length * 14, 16) + 8 + bodyH + pad;
 
   return {
@@ -566,7 +575,7 @@ function buildBlocks(doc: Doc, input: PdfInput): Block[] {
   const sugg = Object.entries(report.suggestions ?? {}).filter(([, v]) => !!v) as [string, string][];
   if (sugg.length) {
     b.push(sectionHeading(doc, "Suggested rewrites"));
-    b.push(labelValueGrid(doc, sugg.map(([k, v]) => ({ label: k, value: v })), 2));
+    b.push(labelValueGrid(doc, sugg.map(([k, v]) => ({ label: REWRITE_LABELS[k] ?? k.charAt(0).toUpperCase() + k.slice(1), value: v })), 2));
   }
 
   /* ---- Technical summary ---- */
