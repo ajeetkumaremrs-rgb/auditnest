@@ -90,7 +90,7 @@ function AuthPage() {
       }
       navigate({ to: "/dashboard", replace: true });
     } catch (err) {
-      toast.error(err instanceof Error ? err.message : "Authentication failed");
+      toast.error(friendlyAuthError(err instanceof Error ? err.message : undefined));
     } finally {
       setLoading(false);
     }
