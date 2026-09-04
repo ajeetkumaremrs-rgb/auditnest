@@ -23,7 +23,23 @@ export const Route = createFileRoute("/auth")({
   component: AuthPage,
 });
 
+function friendlyAuthError(raw?: string): string {
+  const m = (raw ?? "").toLowerCase();
+  if (m.includes("vendor") || m.includes("unsupported provider") || m.includes("provider is not enabled"))
+    return "Google sign-in is temporarily unavailable. Please try again in a moment or use email and password.";
+  if (m.includes("popup") || m.includes("closed"))
+    return "The Google sign-in window was closed before finishing. Please try again.";
+  if (m.includes("invalid login credentials")) return "Incorrect email or password.";
+  if (m.includes("email not confirmed")) return "Please confirm your email address, then sign in.";
+  if (m.includes("already registered") || m.includes("user already"))
+    return "An account with this email already exists. Try signing in instead.";
+  if (m.includes("password")) return raw!;
+  if (m.includes("network") || m.includes("fetch")) return "Network problem reaching the server. Check your connection and retry.";
+  return raw && raw.trim() ? raw : "Sign-in failed. Please try again.";
+}
+
 function AuthPage() {
+
   const navigate = useNavigate();
   const [mode, setMode] = useState<"signin" | "signup">("signin");
   const [email, setEmail] = useState("");
@@ -38,17 +54,23 @@ function AuthPage() {
 
   const handleGoogle = async () => {
     setLoading(true);
-    const result = await lovable.auth.signInWithOAuth("google", {
-      redirect_uri: window.location.origin + "/auth",
-    });
-    if (result.error) {
-      toast.error(result.error.message ?? "Google sign-in failed");
+    try {
+      const result = await lovable.auth.signInWithOAuth("google", {
+        redirect_uri: window.location.origin + "/auth",
+      });
+      if (result.error) {
+        toast.error(friendlyAuthError(result.error.message));
+        setLoading(false);
+        return;
+      }
+      if (result.redirected) return;
+      navigate({ to: "/dashboard", replace: true });
+    } catch (err) {
+      toast.error(friendlyAuthError(err instanceof Error ? err.message : String(err)));
       setLoading(false);
-      return;
     }
-    if (result.redirected) return;
-    navigate({ to: "/dashboard", replace: true });
   };
+
 
   const handleEmail = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -68,7 +90,7 @@ function AuthPage() {
       }
       navigate({ to: "/dashboard", replace: true });
     } catch (err) {
-      toast.error(err instanceof Error ? err.message : "Authentication failed");
+      toast.error(friendlyAuthError(err instanceof Error ? err.message : undefined));
     } finally {
       setLoading(false);
     }
