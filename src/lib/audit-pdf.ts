@@ -54,6 +54,15 @@ interface Block {
   keepWithNext?: boolean;
 }
 
+const REWRITE_LABELS: Record<string, string> = {
+  headline: "Headline",
+  cta: "Call to action",
+  hero: "Hero section",
+  pricing: "Pricing",
+  features: "Features",
+  testimonials: "Testimonials",
+};
+
 export async function downloadAuditPdf(input: PdfInput) {
   const { jsPDF } = await import("jspdf");
   const doc: Doc = new jsPDF({ unit: "pt", format: "a4", compress: true });
@@ -566,7 +575,7 @@ function buildBlocks(doc: Doc, input: PdfInput): Block[] {
   const sugg = Object.entries(report.suggestions ?? {}).filter(([, v]) => !!v) as [string, string][];
   if (sugg.length) {
     b.push(sectionHeading(doc, "Suggested rewrites"));
-    b.push(labelValueGrid(doc, sugg.map(([k, v]) => ({ label: k.charAt(0).toUpperCase() + k.slice(1), value: v })), 2));
+    b.push(labelValueGrid(doc, sugg.map(([k, v]) => ({ label: REWRITE_LABELS[k] ?? k.charAt(0).toUpperCase() + k.slice(1), value: v })), 2));
   }
 
   /* ---- Technical summary ---- */
