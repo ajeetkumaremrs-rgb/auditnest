@@ -302,7 +302,7 @@ function issueCard(doc: Doc, r: Recommendation, index?: number): Block {
     lines: wrap(doc, f.v, 9.8, false, innerW - 8),
   }));
 
-  const bodyH = fieldLines.reduce((a, f) => a + 11 + f.lines.length * 13 + 5, 0);
+  const bodyH = fieldLines.reduce((a, f) => a + 11 + f.lines.length * 13 + 5, 0) - 5;
   const h = pad + Math.max(titleLines.length * 14, 16) + 8 + bodyH + pad;
 
   return {
@@ -566,7 +566,7 @@ function buildBlocks(doc: Doc, input: PdfInput): Block[] {
   const sugg = Object.entries(report.suggestions ?? {}).filter(([, v]) => !!v) as [string, string][];
   if (sugg.length) {
     b.push(sectionHeading(doc, "Suggested rewrites"));
-    b.push(labelValueGrid(doc, sugg.map(([k, v]) => ({ label: k, value: v })), 2));
+    b.push(labelValueGrid(doc, sugg.map(([k, v]) => ({ label: k.charAt(0).toUpperCase() + k.slice(1), value: v })), 2));
   }
 
   /* ---- Technical summary ---- */
