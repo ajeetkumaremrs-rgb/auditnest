@@ -52,7 +52,7 @@ function Landing() {
             <div className="h-8 w-8 rounded-lg bg-primary text-primary-foreground grid place-items-center">
               <Sparkles className="h-4 w-4" />
             </div>
-            <span className="font-display font-semibold text-lg">ConvertIQ</span>
+            <span className="font-display font-semibold text-lg">AuditNest</span>
           </div>
           <div className="flex items-center gap-2">
             <Link to="/auth"><Button variant="ghost">Sign in</Button></Link>
@@ -71,7 +71,7 @@ function Landing() {
             <span className="text-primary">Fix what's costing you conversions.</span>
           </h1>
           <p className="text-lg text-muted-foreground max-w-2xl mx-auto mb-8">
-            Paste a URL. ConvertIQ crawls the page, runs a real Lighthouse test, and returns a prioritised AI report with concrete rewrites for your hero, CTA, SEO and UX.
+            Paste a URL. AuditNest crawls the page, runs a real Lighthouse test, and returns a prioritised AI report with concrete rewrites for your hero, CTA, SEO and UX.
           </p>
           <div className="flex justify-center gap-3">
             <Link to="/auth">
@@ -99,13 +99,13 @@ function Landing() {
       <section className="border-t bg-muted/40">
         <div className="max-w-4xl mx-auto px-4 py-20 text-center">
           <h2 className="text-3xl md:text-4xl font-semibold mb-4">Real audits. Not templates.</h2>
-          <p className="text-muted-foreground mb-8">Every ConvertIQ report is generated from a live crawl of your page and a real Google Lighthouse run — never boilerplate.</p>
+          <p className="text-muted-foreground mb-8">Every AuditNest report is generated from a live crawl of your page and a real Google Lighthouse run — never boilerplate.</p>
           <Link to="/auth"><Button size="lg">Start free</Button></Link>
         </div>
       </section>
 
       <footer className="border-t py-8 text-center text-sm text-muted-foreground">
-        © {new Date().getFullYear()} ConvertIQ
+        © {new Date().getFullYear()} AuditNest
       </footer>
     </div>
   );

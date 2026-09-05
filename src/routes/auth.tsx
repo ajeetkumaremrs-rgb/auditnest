@@ -109,7 +109,7 @@ function AuthPage() {
             <div className="h-9 w-9 rounded-lg bg-primary text-primary-foreground grid place-items-center">
               <Sparkles className="h-5 w-5" />
             </div>
-            <span className="font-display font-semibold text-lg">ConvertIQ</span>
+            <span className="font-display font-semibold text-lg">AuditNest</span>
           </div>
           <h1 className="text-2xl font-semibold mb-1">
             {mode === "signin" ? "Welcome back" : "Create your account"}
