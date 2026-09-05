@@ -18,14 +18,78 @@ const BROWSER_HEADERS: Record<string, string> = {
   "Sec-Fetch-User": "?1",
 };
 
-const FETCH_TIMEOUT_MS = 30000;
+const FETCH_TIMEOUT_MS = 12000;
+
+/* ------------------------------------------------------------------ */
+/* Budget + structured stage logging                                   */
+/* ------------------------------------------------------------------ */
+
+/** Hard ceiling for the whole audit; individual stages get sub-budgets. */
+export const AUDIT_BUDGET_MS = 70000;
+
+export interface Budget {
+  url: string;
+  deadline: number;
+}
+
+export function createBudget(url: string, ms = AUDIT_BUDGET_MS): Budget {
+  return { url, deadline: Date.now() + ms };
+}
+
+export function remaining(b: Budget): number {
+  return Math.max(0, b.deadline - Date.now());
+}
+
+/** Structured server log for every external request / audit step. */
+export function logStep(
+  budget: Budget,
+  step: string,
+  request: string,
+  startedAt: number,
+  extra: Record<string, unknown> = {},
+): void {
+  console.info("[audit:step]", {
+    url: budget.url,
+    step,
+    request,
+    elapsedMs: Date.now() - startedAt,
+    remainingMs: remaining(budget),
+    ...extra,
+  });
+}
+
+export class InvalidUrlError extends Error {}
 
 export function normalizeUrl(input: string): string {
-  let u = input.trim();
+  const raw = input.trim();
+  if (!raw) throw new InvalidUrlError("Please enter a website URL.");
+  if (/^(?!https?:)[a-z][a-z\d+.-]*:/i.test(raw)) {
+    throw new InvalidUrlError("Only http:// and https:// URLs can be audited.");
+  }
+  let u = raw;
   if (!/^https?:\/\//i.test(u)) u = "https://" + u;
-  const parsed = new URL(u);
+  let parsed: URL;
+  try {
+    parsed = new URL(u);
+  } catch {
+    throw new InvalidUrlError(`"${raw}" is not a valid website URL.`);
+  }
+  const host = parsed.hostname.toLowerCase();
+  const isIp = /^\d{1,3}(\.\d{1,3}){3}$/.test(host);
+  if (!isIp && (!host.includes(".") || host.startsWith(".") || host.endsWith("."))) {
+    throw new InvalidUrlError(`"${raw}" is not a valid website URL — a domain like example.com is required.`);
+  }
+  if (
+    host === "localhost" ||
+    host.endsWith(".local") ||
+    /^(127\.|10\.|192\.168\.|169\.254\.|0\.)/.test(host) ||
+    /^172\.(1[6-9]|2\d|3[01])\./.test(host)
+  ) {
+    throw new InvalidUrlError("Private and local addresses cannot be audited — use a public website URL.");
+  }
   return parsed.toString();
 }
+
 
 const SECURITY_HEADERS = [
   "strict-transport-security",
