@@ -78,23 +78,25 @@ export const Route = createRootRouteWithContext<{ queryClient: QueryClient }>()(
     meta: [
       { charSet: "utf-8" },
       { name: "viewport", content: "width=device-width, initial-scale=1" },
-      { title: "ConvertIQ — AI Website Audits That Actually Convert" },
+      { title: "AuditNest – AI Website Audit Tool" },
       {
         name: "description",
         content:
-          "Get a real AI-powered audit of any website. SEO, performance, UX, accessibility and conversion insights in under a minute.",
+          "Audit your website for SEO, performance, accessibility, UX and conversion issues with actionable recommendations.",
       },
-      { property: "og:title", content: "ConvertIQ — AI Website Audits" },
+      { property: "og:title", content: "AuditNest – AI Website Audit Tool" },
       {
         property: "og:description",
-        content: "Real AI audits for any URL: SEO, performance, UX, and conversion.",
+        content:
+          "Get a detailed AI-powered audit of your website with clear issues, priorities and recommended fixes.",
       },
       { property: "og:type", content: "website" },
+      { property: "og:site_name", content: "AuditNest" },
       { name: "twitter:card", content: "summary_large_image" },
     ],
     links: [
       { rel: "stylesheet", href: appCss },
-      { rel: "icon", href: "/favicon.ico", type: "image/x-icon" },
+      { rel: "icon", type: "image/png", href: "/favicon.png" },
       { rel: "preconnect", href: "https://fonts.googleapis.com" },
       { rel: "preconnect", href: "https://fonts.gstatic.com", crossOrigin: "anonymous" },
       {

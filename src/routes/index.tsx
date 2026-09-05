@@ -5,19 +5,31 @@ import { Sparkles, Gauge, Search, Target, Shield, Smartphone, ArrowRight } from 
 export const Route = createFileRoute("/")({
   head: () => ({
     meta: [
-      { title: "ConvertIQ — AI Website Audits" },
+      { title: "AuditNest – AI Website Audit Tool" },
       {
         name: "description",
-        content: "Run real AI website audits with live crawl, SEO, UX, accessibility, performance, and conversion insights.",
+        content:
+          "Audit your website for SEO, performance, accessibility, UX and conversion issues with actionable recommendations.",
       },
-      { property: "og:title", content: "ConvertIQ — AI Website Audits" },
+      { property: "og:title", content: "AuditNest – AI Website Audit Tool" },
       {
         property: "og:description",
-        content: "Analyze any public URL and get a prioritized AI report for SEO, UX, speed, accessibility, and conversions.",
+        content:
+          "Get a detailed AI-powered audit of your website with clear issues, priorities and recommended fixes.",
       },
       { property: "og:type", content: "website" },
+      { property: "og:url", content: "https://auditnest.vercel.app/" },
+      { property: "og:image", content: "https://auditnest.vercel.app/og-image.png" },
       { name: "twitter:card", content: "summary_large_image" },
+      { name: "twitter:title", content: "AuditNest – AI Website Audit Tool" },
+      {
+        name: "twitter:description",
+        content:
+          "Get a detailed AI-powered audit of your website with clear issues, priorities and recommended fixes.",
+      },
+      { name: "twitter:image", content: "https://auditnest.vercel.app/og-image.png" },
     ],
+    links: [{ rel: "canonical", href: "https://auditnest.vercel.app/" }],
   }),
   component: Landing,
 });
