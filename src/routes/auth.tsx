@@ -12,10 +12,10 @@ import { Sparkles, ArrowLeft } from "lucide-react";
 export const Route = createFileRoute("/auth")({
   head: () => ({
     meta: [
-      { title: "Sign in — ConvertIQ" },
-      { name: "description", content: "Sign in to ConvertIQ to run AI-powered website audits." },
-      { property: "og:title", content: "Sign in — ConvertIQ" },
-      { property: "og:description", content: "Access ConvertIQ to run and review AI-powered website audits." },
+      { title: "Sign in — AuditNest" },
+      { name: "description", content: "Sign in to AuditNest to run AI-powered website audits." },
+      { property: "og:title", content: "Sign in — AuditNest" },
+      { property: "og:description", content: "Access AuditNest to run and review AI-powered website audits." },
       { property: "og:type", content: "website" },
       { name: "twitter:card", content: "summary_large_image" },
     ],
