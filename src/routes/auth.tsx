@@ -12,10 +12,10 @@ import { Sparkles, ArrowLeft } from "lucide-react";
 export const Route = createFileRoute("/auth")({
   head: () => ({
     meta: [
-      { title: "Sign in — ConvertIQ" },
-      { name: "description", content: "Sign in to ConvertIQ to run AI-powered website audits." },
-      { property: "og:title", content: "Sign in — ConvertIQ" },
-      { property: "og:description", content: "Access ConvertIQ to run and review AI-powered website audits." },
+      { title: "Sign in — AuditNest" },
+      { name: "description", content: "Sign in to AuditNest to run AI-powered website audits." },
+      { property: "og:title", content: "Sign in — AuditNest" },
+      { property: "og:description", content: "Access AuditNest to run and review AI-powered website audits." },
       { property: "og:type", content: "website" },
       { name: "twitter:card", content: "summary_large_image" },
     ],
@@ -109,7 +109,7 @@ function AuthPage() {
             <div className="h-9 w-9 rounded-lg bg-primary text-primary-foreground grid place-items-center">
               <Sparkles className="h-5 w-5" />
             </div>
-            <span className="font-display font-semibold text-lg">ConvertIQ</span>
+            <span className="font-display font-semibold text-lg">AuditNest</span>
           </div>
           <h1 className="text-2xl font-semibold mb-1">
             {mode === "signin" ? "Welcome back" : "Create your account"}

@@ -14,10 +14,10 @@ import { Sparkles, Loader2, ExternalLink, LogOut, Plus, Check } from "lucide-rea
 export const Route = createFileRoute("/_authenticated/dashboard")({
   head: () => ({
     meta: [
-      { title: "Dashboard — ConvertIQ" },
+      { title: "Dashboard — AuditNest" },
       { name: "description", content: "Run new website audits and review your history." },
-      { property: "og:title", content: "Dashboard — ConvertIQ" },
-      { property: "og:description", content: "Run real AI website audits and review your ConvertIQ report history." },
+      { property: "og:title", content: "Dashboard — AuditNest" },
+      { property: "og:description", content: "Run real AI website audits and review your AuditNest report history." },
       { property: "og:type", content: "website" },
       { name: "twitter:card", content: "summary_large_image" },
     ],
@@ -63,7 +63,7 @@ function Dashboard() {
             <div className="h-8 w-8 rounded-lg bg-primary text-primary-foreground grid place-items-center">
               <Sparkles className="h-4 w-4" />
             </div>
-            <span className="font-display font-semibold text-lg">ConvertIQ</span>
+            <span className="font-display font-semibold text-lg">AuditNest</span>
           </Link>
           <Button variant="ghost" size="sm" onClick={handleSignOut}>
             <LogOut className="h-4 w-4 mr-1" /> Sign out
@@ -75,7 +75,7 @@ function Dashboard() {
         <Card className="p-8 mb-10 gradient-hero">
           <h1 className="text-3xl font-semibold mb-2">Run a new audit</h1>
           <p className="text-muted-foreground mb-6">
-            Paste any public URL. ConvertIQ crawls the page, runs Lighthouse, and generates an AI report — usually in under a minute.
+            Paste any public URL. AuditNest crawls the page, runs Lighthouse, and generates an AI report — usually in under a minute.
           </p>
           <form
             onSubmit={(e) => {
