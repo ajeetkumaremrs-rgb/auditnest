@@ -729,11 +729,14 @@ export async function crawlSite(rawUrl: string, budget?: Budget): Promise<Extrac
 
 const PSI_CACHE_TTL_MS = 10 * 60 * 1000;
 const psiCache = new Map<string, { at: number; value: LighthouseSummary }>();
-const RETRY_DELAYS_MS = [2000, 5000, 10000];
+/** Only temporary failures are retried (429 / 5xx / network); never permanent 4xx. */
+const RETRY_DELAYS_MS = [1500, 4000];
+const PSI_REQUEST_TIMEOUT_MS = 30000;
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
-export async function runLighthouse(url: string): Promise<LighthouseSummary> {
+export async function runLighthouse(url: string, budget?: Budget): Promise<LighthouseSummary> {
+  const b = budget ?? createBudget(url);
   const apiKey =
     process.env["PAGESPEED_API_KEY"] || process.env["GOOGLE_PAGESPEED_API_KEY"] || "";
   const cacheKey = `mobile:${url}`;
@@ -753,12 +756,23 @@ export async function runLighthouse(url: string): Promise<LighthouseSummary> {
   let lastError = "PageSpeed request failed";
 
   for (let attempt = 0; attempt <= RETRY_DELAYS_MS.length; attempt++) {
-    if (attempt > 0) await sleep(RETRY_DELAYS_MS[attempt - 1]);
+    if (attempt > 0) {
+      if (remaining(b) < 20000) {
+        return empty(`${lastError} (audit time budget reached)`, attempt, Boolean(apiKey));
+      }
+      await sleep(RETRY_DELAYS_MS[attempt - 1]);
+    }
 
+    const started = Date.now();
     const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), 55000);
+    const perAttempt = Math.min(PSI_REQUEST_TIMEOUT_MS, Math.max(5000, remaining(b) - 15000));
+    const timeout = setTimeout(() => controller.abort(), perAttempt);
     try {
       const res = await fetch(endpoint, { signal: controller.signal });
+      logStep(b, "checking-performance", "PageSpeed Insights", started, {
+        status: res.status,
+        attempt: attempt + 1,
+      });
       if (res.status === 429 || res.status >= 500) {
         lastError =
           res.status === 429
@@ -772,6 +786,7 @@ export async function runLighthouse(url: string): Promise<LighthouseSummary> {
         const detail = await res.text().catch(() => "");
         return empty(`PageSpeed API returned ${res.status}${detail ? `: ${detail.slice(0, 200)}` : ""}`, attempt, Boolean(apiKey));
       }
+
 
       const data: any = await res.json();
       const cats = data.lighthouseResult?.categories ?? {};
