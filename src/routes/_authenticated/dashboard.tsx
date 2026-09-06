@@ -177,7 +177,7 @@ function AuditProgress() {
         </div>
       ))}
       <p className="pt-1 text-xs text-muted-foreground">
-        Elapsed {elapsed}s — PageSpeed retries automatically (2s, 5s, 10s) if Google rate-limits us.
+        Elapsed {elapsed}s — most audits finish in under a minute. If a check fails or times out, you still get a report from the data we did collect.
       </p>
     </div>
   );
