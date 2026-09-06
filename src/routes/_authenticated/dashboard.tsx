@@ -144,11 +144,15 @@ function Dashboard() {
 }
 
 const STEPS = [
-  { label: "Fetching page…", at: 0 },
-  { label: "Rendering page (if JS-protected)…", at: 8 },
-  { label: "Running Lighthouse (auto-retries on rate limits)…", at: 16 },
-  { label: "Generating AI report…", at: 45 },
+  { label: "Validating URL", at: 0 },
+  { label: "Fetching website", at: 1 },
+  { label: "Checking SEO", at: 6 },
+  { label: "Checking performance", at: 10 },
+  { label: "Checking accessibility", at: 16 },
+  { label: "Analyzing results", at: 24 },
+  { label: "Generating report", at: 32 },
 ];
+
 
 function AuditProgress() {
   const [elapsed, setElapsed] = useState(0);
