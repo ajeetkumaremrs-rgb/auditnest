@@ -280,8 +280,34 @@ Return ONLY valid JSON with this exact shape and no markdown fences:
 }
 Do not output any numeric score — scores are computed separately from measured data. If Lighthouse is unavailable, performanceNotes must say so plainly rather than estimating speed.`;
 
-  const { text } = await generateText({ model, prompt });
+  const aiStarted = Date.now();
+  let text: string;
+  try {
+    const result = await generateText({ model, prompt, abortSignal: AbortSignal.timeout(timeoutMs) });
+    text = result.text;
+    console.info("[audit:step]", {
+      url: extracted.finalUrl,
+      step: "generating-report",
+      request: "Lovable AI Gateway",
+      elapsedMs: Date.now() - aiStarted,
+      ok: true,
+    });
+  } catch (e) {
+    console.error("[audit:step]", {
+      url: extracted.finalUrl,
+      step: "generating-report",
+      request: "Lovable AI Gateway",
+      elapsedMs: Date.now() - aiStarted,
+      error: e instanceof Error ? e.message : String(e),
+    });
+    return dataOnlyReport(
+      extracted,
+      lighthouse,
+      "Some audit data could not be collected: the written AI analysis timed out or failed.",
+    );
+  }
   const normalized = text.trim().replace(/^```(?:json)?\s*/i, "").replace(/\s*```$/, "");
+
 
   // Models occasionally wrap JSON in prose; take the outermost JSON object.
   const start = normalized.indexOf("{");
