@@ -1,16 +1,47 @@
 import { createServerFn } from "@tanstack/react-start";
 import { requireSupabaseAuth } from "@/integrations/supabase/auth-middleware";
 import { z } from "zod";
-import { crawlSite, runLighthouse, normalizeUrl } from "./audit-engine.server";
-import { generateReport } from "./audit-report.server";
+import {
+  crawlSite,
+  runLighthouse,
+  normalizeUrl,
+  createBudget,
+  remaining,
+  InvalidUrlError,
+} from "./audit-engine.server";
+import { generateReport, dataOnlyReport } from "./audit-report.server";
 import type { AuditReport, Extracted, LighthouseSummary } from "./audit-shared";
+
+/** Hard ceiling for the collection phase; the report is generated from whatever finished. */
+const COLLECTION_TIMEOUT_MS = 55000;
+
+function withTimeout<T>(p: Promise<T>, ms: number, label: string): Promise<T> {
+  return Promise.race([
+    p,
+    new Promise<never>((_, reject) =>
+      setTimeout(() => reject(new Error(`${label} exceeded its ${Math.round(ms / 1000)}s time budget`)), ms),
+    ),
+  ]);
+}
 
 export const runAudit = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])
   .inputValidator((data: unknown) => z.object({ url: z.string().min(3).max(2000) }).parse(data))
   .handler(async ({ data, context }) => {
-    const url = normalizeUrl(data.url);
+    // Step 1 — validate the URL before anything else is started.
+    let url: string;
+    try {
+      url = normalizeUrl(data.url);
+    } catch (e) {
+      const message =
+        e instanceof InvalidUrlError ? e.message : `"${data.url}" is not a valid website URL.`;
+      console.warn("[audit:step]", { url: data.url, step: "validating-url", error: message });
+      throw new Error(message);
+    }
+
     const { supabase, userId } = context;
+    const budget = createBudget(url);
+    const startedAt = Date.now();
     console.info("[audit] starting", { userId, url });
 
     const { data: inserted, error: insertErr } = await supabase
@@ -25,22 +56,77 @@ export const runAudit = createServerFn({ method: "POST" })
     const auditId = inserted.id;
 
     try {
-      console.info("[audit] crawling + PageSpeed (parallel)", { auditId, url });
-      // HTML analysis and Lighthouse run in parallel; Lighthouse failure never
-      // aborts the audit — HTML analysis still produces a real report.
-      const [extracted, lighthouse] = await Promise.all([crawlSite(url), runLighthouse(url)]);
+      // Steps 2-5 — crawl and PageSpeed run concurrently; each is independently
+      // time-boxed so one slow or failing component never blocks the other.
+      const [crawlResult, lighthouseResult] = await Promise.allSettled([
+        withTimeout(crawlSite(url, budget), COLLECTION_TIMEOUT_MS, "Website fetch"),
+        withTimeout(runLighthouse(url, budget), COLLECTION_TIMEOUT_MS, "PageSpeed check"),
+      ]);
+
+      if (crawlResult.status === "rejected") {
+        // Without any page data there is nothing real to report on.
+        throw crawlResult.reason instanceof Error
+          ? crawlResult.reason
+          : new Error(String(crawlResult.reason));
+      }
+      const extracted = crawlResult.value;
+
+      const lighthouse: LighthouseSummary =
+        lighthouseResult.status === "fulfilled"
+          ? lighthouseResult.value
+          : {
+              performance: null,
+              accessibility: null,
+              bestPractices: null,
+              seo: null,
+              metrics: { fcp: null, lcp: null, cls: null, tbt: null, tti: null, si: null },
+              screenshot: null,
+              strategy: "mobile",
+              fetchTime: null,
+              error:
+                lighthouseResult.reason instanceof Error
+                  ? lighthouseResult.reason.message
+                  : String(lighthouseResult.reason),
+              attempts: 0,
+              apiKeyUsed: false,
+            };
+
       console.info("[audit] collection complete", {
         auditId,
+        url,
         finalUrl: extracted.finalUrl,
+        status: extracted.statusCode,
         blocked: extracted.blocked,
         renderMode: extracted.renderMode,
         performance: lighthouse.performance,
         lighthouseError: lighthouse.error,
         attempts: lighthouse.attempts,
+        elapsedMs: Date.now() - startedAt,
       });
-      const report = await generateReport(extracted, lighthouse);
-      console.info("[audit] AI report complete", { auditId, score: report.overallScore });
 
+      // Step 6-7 — analysis + report, capped by whatever time is left.
+      const aiBudget = Math.max(8000, remaining(budget) - 5000);
+      let report: AuditReport;
+      try {
+        report = await generateReport(extracted, lighthouse, aiBudget);
+      } catch (e) {
+        console.error("[audit] report generation failed", {
+          auditId,
+          url,
+          error: e instanceof Error ? e.message : String(e),
+        });
+        report = dataOnlyReport(
+          extracted,
+          lighthouse,
+          "Some audit data could not be collected: the written AI analysis failed.",
+        );
+      }
+      console.info("[audit] report complete", {
+        auditId,
+        url,
+        score: report.overallScore,
+        elapsedMs: Date.now() - startedAt,
+      });
 
       const { error: updErr } = await supabase
         .from("audits")
@@ -52,15 +138,16 @@ export const runAudit = createServerFn({ method: "POST" })
         })
         .eq("id", auditId);
       if (updErr) throw new Error(updErr.message);
-      console.info("[audit] completed", { auditId });
+      console.info("[audit] completed", { auditId, elapsedMs: Date.now() - startedAt });
       return { id: auditId };
     } catch (e) {
       const message = e instanceof Error ? e.message : String(e);
-      console.error("[audit] failed", { auditId, message, error: e });
+      console.error("[audit] failed", { auditId, url, message, elapsedMs: Date.now() - startedAt });
       await supabase.from("audits").update({ status: "failed", error: message }).eq("id", auditId);
       throw new Error(message);
     }
   });
+
 
 export const listAudits = createServerFn({ method: "GET" })
   .middleware([requireSupabaseAuth])
