@@ -305,7 +305,7 @@ async function fetchWithBrowserHeaders(url: string, referer?: string): Promise<{
  * JavaScript, waits for the page to settle, and returns the final DOM.
  * Works for React, Next.js, Vue, Angular and other client-rendered apps.
  */
-const RENDER_TIMEOUT_MS = 45000;
+const RENDER_TIMEOUT_MS = 18000;
 
 function escapeHtml(v: string): string {
   return v.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
