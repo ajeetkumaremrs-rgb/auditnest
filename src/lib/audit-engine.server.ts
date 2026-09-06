@@ -343,15 +343,16 @@ async function renderOnce(
   url: string,
   waitMs: number,
   mode: "html" | "markdown",
+  budgetMs: number,
 ): Promise<string | null> {
   const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), RENDER_TIMEOUT_MS);
+  const timeout = setTimeout(() => controller.abort(), Math.max(3000, budgetMs));
   try {
     const token = process.env["JINA_API_KEY"];
     const res = await fetch(`https://r.jina.ai/${url}`, {
       headers: {
         ...(mode === "html" ? { "x-return-format": "html", "x-engine": "browser" } : {}),
-        "x-timeout": "30",
+        "x-timeout": "12",
         "x-cache-tolerance": "0",
         ...(waitMs ? { "x-wait-for-timeout": String(waitMs) } : {}),
         Accept: "text/html,*/*;q=0.8",
@@ -373,23 +374,29 @@ async function renderOnce(
 }
 
 /**
- * Renders with retries; each attempt waits longer for hydration. Full-DOM HTML
- * rendering is used when a renderer key is configured, otherwise the rendered
- * content is retrieved in text form and converted back to parseable HTML.
+ * Renders through a remote headless-Chromium service. Both capture modes run
+ * concurrently (instead of sequential retries) and the run is capped by the
+ * remaining audit budget, so rendering can never stall the whole audit.
  */
-async function fetchRendered(url: string): Promise<string | null> {
-  const attempts: { wait: number; mode: "html" | "markdown" }[] = [
-    { wait: 0, mode: "html" },
-    { wait: 2500, mode: "markdown" },
-    { wait: 6000, mode: "markdown" },
-  ];
-  for (let i = 0; i < attempts.length; i++) {
-    const html = await renderOnce(url, attempts[i].wait, attempts[i].mode);
-    if (html) return html;
-    if (i < attempts.length - 1) await new Promise((r) => setTimeout(r, 1000));
+async function fetchRendered(budget: Budget, url: string): Promise<string | null> {
+  const startedAt = Date.now();
+  const budgetMs = Math.min(RENDER_TIMEOUT_MS, remaining(budget) - 12000);
+  if (budgetMs < 4000) {
+    logStep(budget, "render", "r.jina.ai", startedAt, { skipped: "insufficient time budget" });
+    return null;
   }
-  return null;
+  const results = await Promise.allSettled([
+    renderOnce(url, 0, "html", budgetMs),
+    renderOnce(url, 1500, "markdown", budgetMs),
+  ]);
+  const candidates = results
+    .map((r) => (r.status === "fulfilled" ? r.value : null))
+    .filter((v): v is string => Boolean(v))
+    .sort((a, b) => bodyTextLength(b) - bodyTextLength(a));
+  logStep(budget, "render", "r.jina.ai", startedAt, { ok: candidates.length > 0 });
+  return candidates[0] ?? null;
 }
+
 
 
 /** Amount of real, visible body text a document exposes. */
