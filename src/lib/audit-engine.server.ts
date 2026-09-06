@@ -632,12 +632,30 @@ export async function crawlSite(rawUrl: string, budget?: Budget): Promise<Extrac
   const securityHeaders: Record<string, string | null> = {};
   for (const h of SECURITY_HEADERS) securityHeaders[h] = res.headers.get(h);
 
+  const tProbe = Date.now();
+  const probe = async (path: string) => {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 6000);
+    try {
+      const r = await fetch(new URL(path, origin).toString(), {
+        headers: BROWSER_HEADERS,
+        signal: controller.signal,
+      });
+      return r.ok;
+    } catch {
+      return false;
+    } finally {
+      clearTimeout(timer);
+    }
+  };
   const [robotsRes, sitemapRes] = await Promise.allSettled([
-    fetch(new URL("/robots.txt", origin).toString(), { headers: BROWSER_HEADERS }),
-    fetch(new URL("/sitemap.xml", origin).toString(), { headers: BROWSER_HEADERS }),
+    probe("/robots.txt"),
+    probe("/sitemap.xml"),
   ]);
-  const hasRobots = robotsRes.status === "fulfilled" && robotsRes.value.ok;
-  const hasSitemap = sitemapRes.status === "fulfilled" && sitemapRes.value.ok;
+  const hasRobots = robotsRes.status === "fulfilled" && robotsRes.value;
+  const hasSitemap = sitemapRes.status === "fulfilled" && sitemapRes.value;
+  logStep(b, "checking-seo", "robots.txt + sitemap.xml", tProbe, { hasRobots, hasSitemap });
+
 
   const body = findElements(html, "body")[0]?.inner ?? html;
   const textSample = compactText(body).slice(0, 5000);
