@@ -13,7 +13,7 @@ import { generateReport, dataOnlyReport } from "./audit-report.server";
 import type { AuditReport, Extracted, LighthouseSummary } from "./audit-shared";
 
 /** Hard ceiling for the collection phase; the report is generated from whatever finished. */
-const COLLECTION_TIMEOUT_MS = 55000;
+const COLLECTION_TIMEOUT_MS = 42000;
 
 function withTimeout<T>(p: Promise<T>, ms: number, label: string): Promise<T> {
   return Promise.race([

@@ -25,7 +25,7 @@ const FETCH_TIMEOUT_MS = 12000;
 /* ------------------------------------------------------------------ */
 
 /** Hard ceiling for the whole audit; individual stages get sub-budgets. */
-export const AUDIT_BUDGET_MS = 70000;
+export const AUDIT_BUDGET_MS = 60000;
 
 export interface Budget {
   url: string;
@@ -739,7 +739,7 @@ const PSI_CACHE_TTL_MS = 10 * 60 * 1000;
 const psiCache = new Map<string, { at: number; value: LighthouseSummary }>();
 /** Only temporary failures are retried (429 / 5xx / network); never permanent 4xx. */
 const RETRY_DELAYS_MS = [1500, 4000];
-const PSI_REQUEST_TIMEOUT_MS = 45000;
+const PSI_REQUEST_TIMEOUT_MS = 35000;
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
