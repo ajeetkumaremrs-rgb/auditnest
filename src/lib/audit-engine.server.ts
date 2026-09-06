@@ -466,31 +466,48 @@ function estimateFromHtml(e: Omit<Extracted, "htmlEstimate">): HtmlEstimate {
 /* Crawl                                                               */
 /* ------------------------------------------------------------------ */
 
-export async function crawlSite(rawUrl: string): Promise<Extracted> {
+export async function crawlSite(rawUrl: string, budget?: Budget): Promise<Extracted> {
   const url = normalizeUrl(rawUrl);
+  const b = budget ?? createBudget(url);
 
+  const t0 = Date.now();
   let { res, html } = await fetchWithBrowserHeaders(url);
+  logStep(b, "fetch-website", "origin GET (browser headers)", t0, {
+    status: res.status,
+    bytes: html.length,
+  });
   let renderMode: "static" | "rendered" = "static";
   let blockReason = detectChallenge(res.status, html);
 
   // Pass 2: retry as a well-known search crawler (many WAFs allow-list these).
-  if (blockReason) {
+  if (blockReason && remaining(b) > 20000) {
+    const t1 = Date.now();
     try {
       const crawler = await fetchWithHeaders(url, CRAWLER_HEADERS);
+      logStep(b, "fetch-website", "origin GET (crawler UA)", t1, { status: crawler.res.status });
       if (!detectChallenge(crawler.res.status, crawler.html)) {
         res = crawler.res;
         html = crawler.html;
         blockReason = null;
       }
-    } catch {
-      /* keep the original block reason */
+    } catch (e) {
+      logStep(b, "fetch-website", "origin GET (crawler UA)", t1, {
+        error: e instanceof Error ? e.message : String(e),
+      });
     }
   }
+
+  // Rendering is attempted at most once per audit.
+  let renderedOnce: string | null | undefined;
+  const renderCached = async () => {
+    if (renderedOnce === undefined) renderedOnce = await fetchRendered(b, url);
+    return renderedOnce;
+  };
 
   // Pass 3: headless rendering (blocked pages).
   let renderFailed = false;
   if (blockReason) {
-    const rendered = await fetchRendered(url);
+    const rendered = await renderCached();
     if (rendered) {
       const renderedBlock = detectChallenge(200, rendered);
       if (!renderedBlock) {
@@ -510,8 +527,7 @@ export async function crawlSite(rawUrl: string): Promise<Extracted> {
   // Pass 4: the origin responded fine but served a JavaScript app shell.
   // Always render such pages so UX / CTA / conversion analysis sees the real DOM.
   if (!blockReason && bodyTextLength(html) < 600) {
-
-    const rendered = await fetchRendered(url);
+    const rendered = await renderCached();
     if (rendered && bodyTextLength(rendered) > bodyTextLength(html)) {
       html = rendered;
       renderMode = "rendered";
@@ -520,6 +536,7 @@ export async function crawlSite(rawUrl: string): Promise<Extracted> {
       renderFailed = true;
     }
   }
+
 
 
 
