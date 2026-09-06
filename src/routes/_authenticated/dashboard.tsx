@@ -144,11 +144,15 @@ function Dashboard() {
 }
 
 const STEPS = [
-  { label: "Fetching page…", at: 0 },
-  { label: "Rendering page (if JS-protected)…", at: 8 },
-  { label: "Running Lighthouse (auto-retries on rate limits)…", at: 16 },
-  { label: "Generating AI report…", at: 45 },
+  { label: "Validating URL", at: 0 },
+  { label: "Fetching website", at: 1 },
+  { label: "Checking SEO", at: 6 },
+  { label: "Checking performance", at: 10 },
+  { label: "Checking accessibility", at: 16 },
+  { label: "Analyzing results", at: 24 },
+  { label: "Generating report", at: 32 },
 ];
+
 
 function AuditProgress() {
   const [elapsed, setElapsed] = useState(0);
@@ -173,7 +177,7 @@ function AuditProgress() {
         </div>
       ))}
       <p className="pt-1 text-xs text-muted-foreground">
-        Elapsed {elapsed}s — PageSpeed retries automatically (2s, 5s, 10s) if Google rate-limits us.
+        Elapsed {elapsed}s — most audits finish in under a minute. If a check fails or times out, you still get a report from the data we did collect.
       </p>
     </div>
   );

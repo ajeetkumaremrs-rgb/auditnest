@@ -191,16 +191,56 @@ function blockedReport(extracted: Extracted, lighthouse: LighthouseSummary): Aud
   };
 }
 
+/** Measured-data-only report, used when the AI narrative cannot be produced. */
+export function dataOnlyReport(
+  extracted: Extracted,
+  lighthouse: LighthouseSummary,
+  note: string,
+): AuditReport {
+  const { score, basis, breakdown } = computeOverallScore(extracted, lighthouse);
+  const na = "Unavailable — the written analysis could not be generated for this audit.";
+  return {
+    overallScore: score,
+    scoreBasis: basis,
+    scoreBreakdown: breakdown,
+    warnings: [...buildWarnings(extracted, lighthouse), note],
+    summary: `${note} All measured scores, Lighthouse metrics and technical findings below come from the completed audit steps.`,
+    homepageClarity: na,
+    ctaAnalysis: { findings: [], suggestedCta: na },
+    trust: { detected: [], missing: [], notes: na },
+    ux: [],
+    mobile: [],
+    seo: { metaTitle: na, metaDescription: na, headings: na, imageAlt: na, other: [] },
+    accessibility: [],
+    performance: {
+      performanceScore: lighthouse.performance,
+      accessibilityScore: lighthouse.accessibility ?? extracted.htmlEstimate.accessibility,
+      seoScore: lighthouse.seo ?? extracted.htmlEstimate.seo,
+      bestPracticesScore: lighthouse.bestPractices ?? extracted.htmlEstimate.bestPractices,
+      notes: lighthouse.error ?? "Measured by Google PageSpeed Insights (Lighthouse).",
+    },
+    conversion: [],
+    recommendations: [],
+    suggestions: {},
+  };
+}
+
+const AI_TIMEOUT_MS = 40000;
+
 export async function generateReport(
   extracted: Extracted,
   lighthouse: LighthouseSummary,
+  timeoutMs = AI_TIMEOUT_MS,
 ): Promise<AuditReport> {
   if (extracted.blocked) return blockedReport(extracted, lighthouse);
 
   const key = process.env.LOVABLE_API_KEY;
-  if (!key) throw new Error("Missing LOVABLE_API_KEY");
+  if (!key) {
+    return dataOnlyReport(extracted, lighthouse, "Some audit data could not be collected: the AI analysis service is not configured.");
+  }
   const gateway = createLovableAiGatewayProvider(key);
   const model = gateway("google/gemini-2.5-flash");
+
 
   const compactExtracted = {
     ...extracted,
@@ -240,8 +280,34 @@ Return ONLY valid JSON with this exact shape and no markdown fences:
 }
 Do not output any numeric score — scores are computed separately from measured data. If Lighthouse is unavailable, performanceNotes must say so plainly rather than estimating speed.`;
 
-  const { text } = await generateText({ model, prompt });
+  const aiStarted = Date.now();
+  let text: string;
+  try {
+    const result = await generateText({ model, prompt, abortSignal: AbortSignal.timeout(timeoutMs) });
+    text = result.text;
+    console.info("[audit:step]", {
+      url: extracted.finalUrl,
+      step: "generating-report",
+      request: "Lovable AI Gateway",
+      elapsedMs: Date.now() - aiStarted,
+      ok: true,
+    });
+  } catch (e) {
+    console.error("[audit:step]", {
+      url: extracted.finalUrl,
+      step: "generating-report",
+      request: "Lovable AI Gateway",
+      elapsedMs: Date.now() - aiStarted,
+      error: e instanceof Error ? e.message : String(e),
+    });
+    return dataOnlyReport(
+      extracted,
+      lighthouse,
+      "Some audit data could not be collected: the written AI analysis timed out or failed.",
+    );
+  }
   const normalized = text.trim().replace(/^```(?:json)?\s*/i, "").replace(/\s*```$/, "");
+
 
   // Models occasionally wrap JSON in prose; take the outermost JSON object.
   const start = normalized.indexOf("{");

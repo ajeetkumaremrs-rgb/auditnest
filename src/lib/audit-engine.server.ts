@@ -25,7 +25,7 @@ const FETCH_TIMEOUT_MS = 12000;
 /* ------------------------------------------------------------------ */
 
 /** Hard ceiling for the whole audit; individual stages get sub-budgets. */
-export const AUDIT_BUDGET_MS = 70000;
+export const AUDIT_BUDGET_MS = 60000;
 
 export interface Budget {
   url: string;
@@ -76,6 +76,14 @@ export function normalizeUrl(input: string): string {
   }
   const host = parsed.hostname.toLowerCase();
   const isIp = /^\d{1,3}(\.\d{1,3}){3}$/.test(host);
+  if (
+    host === "localhost" ||
+    host.endsWith(".local") ||
+    /^(127\.|10\.|192\.168\.|169\.254\.|0\.)/.test(host) ||
+    /^172\.(1[6-9]|2\d|3[01])\./.test(host)
+  ) {
+    throw new InvalidUrlError("Private and local addresses cannot be audited — use a public website URL.");
+  }
   if (!isIp && (!host.includes(".") || host.startsWith(".") || host.endsWith("."))) {
     throw new InvalidUrlError(`"${raw}" is not a valid website URL — a domain like example.com is required.`);
   }
@@ -305,7 +313,7 @@ async function fetchWithBrowserHeaders(url: string, referer?: string): Promise<{
  * JavaScript, waits for the page to settle, and returns the final DOM.
  * Works for React, Next.js, Vue, Angular and other client-rendered apps.
  */
-const RENDER_TIMEOUT_MS = 45000;
+const RENDER_TIMEOUT_MS = 18000;
 
 function escapeHtml(v: string): string {
   return v.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
@@ -343,15 +351,16 @@ async function renderOnce(
   url: string,
   waitMs: number,
   mode: "html" | "markdown",
+  budgetMs: number,
 ): Promise<string | null> {
   const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), RENDER_TIMEOUT_MS);
+  const timeout = setTimeout(() => controller.abort(), Math.max(3000, budgetMs));
   try {
     const token = process.env["JINA_API_KEY"];
     const res = await fetch(`https://r.jina.ai/${url}`, {
       headers: {
         ...(mode === "html" ? { "x-return-format": "html", "x-engine": "browser" } : {}),
-        "x-timeout": "30",
+        "x-timeout": "12",
         "x-cache-tolerance": "0",
         ...(waitMs ? { "x-wait-for-timeout": String(waitMs) } : {}),
         Accept: "text/html,*/*;q=0.8",
@@ -373,23 +382,29 @@ async function renderOnce(
 }
 
 /**
- * Renders with retries; each attempt waits longer for hydration. Full-DOM HTML
- * rendering is used when a renderer key is configured, otherwise the rendered
- * content is retrieved in text form and converted back to parseable HTML.
+ * Renders through a remote headless-Chromium service. Both capture modes run
+ * concurrently (instead of sequential retries) and the run is capped by the
+ * remaining audit budget, so rendering can never stall the whole audit.
  */
-async function fetchRendered(url: string): Promise<string | null> {
-  const attempts: { wait: number; mode: "html" | "markdown" }[] = [
-    { wait: 0, mode: "html" },
-    { wait: 2500, mode: "markdown" },
-    { wait: 6000, mode: "markdown" },
-  ];
-  for (let i = 0; i < attempts.length; i++) {
-    const html = await renderOnce(url, attempts[i].wait, attempts[i].mode);
-    if (html) return html;
-    if (i < attempts.length - 1) await new Promise((r) => setTimeout(r, 1000));
+async function fetchRendered(budget: Budget, url: string): Promise<string | null> {
+  const startedAt = Date.now();
+  const budgetMs = Math.min(RENDER_TIMEOUT_MS, remaining(budget) - 12000);
+  if (budgetMs < 4000) {
+    logStep(budget, "render", "r.jina.ai", startedAt, { skipped: "insufficient time budget" });
+    return null;
   }
-  return null;
+  const results = await Promise.allSettled([
+    renderOnce(url, 0, "html", budgetMs),
+    renderOnce(url, 1500, "markdown", budgetMs),
+  ]);
+  const candidates = results
+    .map((r) => (r.status === "fulfilled" ? r.value : null))
+    .filter((v): v is string => Boolean(v))
+    .sort((a, b) => bodyTextLength(b) - bodyTextLength(a));
+  logStep(budget, "render", "r.jina.ai", startedAt, { ok: candidates.length > 0 });
+  return candidates[0] ?? null;
 }
+
 
 
 /** Amount of real, visible body text a document exposes. */
@@ -459,31 +474,48 @@ function estimateFromHtml(e: Omit<Extracted, "htmlEstimate">): HtmlEstimate {
 /* Crawl                                                               */
 /* ------------------------------------------------------------------ */
 
-export async function crawlSite(rawUrl: string): Promise<Extracted> {
+export async function crawlSite(rawUrl: string, budget?: Budget): Promise<Extracted> {
   const url = normalizeUrl(rawUrl);
+  const b = budget ?? createBudget(url);
 
+  const t0 = Date.now();
   let { res, html } = await fetchWithBrowserHeaders(url);
+  logStep(b, "fetch-website", "origin GET (browser headers)", t0, {
+    status: res.status,
+    bytes: html.length,
+  });
   let renderMode: "static" | "rendered" = "static";
   let blockReason = detectChallenge(res.status, html);
 
   // Pass 2: retry as a well-known search crawler (many WAFs allow-list these).
-  if (blockReason) {
+  if (blockReason && remaining(b) > 20000) {
+    const t1 = Date.now();
     try {
       const crawler = await fetchWithHeaders(url, CRAWLER_HEADERS);
+      logStep(b, "fetch-website", "origin GET (crawler UA)", t1, { status: crawler.res.status });
       if (!detectChallenge(crawler.res.status, crawler.html)) {
         res = crawler.res;
         html = crawler.html;
         blockReason = null;
       }
-    } catch {
-      /* keep the original block reason */
+    } catch (e) {
+      logStep(b, "fetch-website", "origin GET (crawler UA)", t1, {
+        error: e instanceof Error ? e.message : String(e),
+      });
     }
   }
+
+  // Rendering is attempted at most once per audit.
+  let renderedOnce: string | null | undefined;
+  const renderCached = async () => {
+    if (renderedOnce === undefined) renderedOnce = await fetchRendered(b, url);
+    return renderedOnce;
+  };
 
   // Pass 3: headless rendering (blocked pages).
   let renderFailed = false;
   if (blockReason) {
-    const rendered = await fetchRendered(url);
+    const rendered = await renderCached();
     if (rendered) {
       const renderedBlock = detectChallenge(200, rendered);
       if (!renderedBlock) {
@@ -503,8 +535,7 @@ export async function crawlSite(rawUrl: string): Promise<Extracted> {
   // Pass 4: the origin responded fine but served a JavaScript app shell.
   // Always render such pages so UX / CTA / conversion analysis sees the real DOM.
   if (!blockReason && bodyTextLength(html) < 600) {
-
-    const rendered = await fetchRendered(url);
+    const rendered = await renderCached();
     if (rendered && bodyTextLength(rendered) > bodyTextLength(html)) {
       html = rendered;
       renderMode = "rendered";
@@ -513,6 +544,7 @@ export async function crawlSite(rawUrl: string): Promise<Extracted> {
       renderFailed = true;
     }
   }
+
 
 
 
@@ -608,12 +640,30 @@ export async function crawlSite(rawUrl: string): Promise<Extracted> {
   const securityHeaders: Record<string, string | null> = {};
   for (const h of SECURITY_HEADERS) securityHeaders[h] = res.headers.get(h);
 
+  const tProbe = Date.now();
+  const probe = async (path: string) => {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 6000);
+    try {
+      const r = await fetch(new URL(path, origin).toString(), {
+        headers: BROWSER_HEADERS,
+        signal: controller.signal,
+      });
+      return r.ok;
+    } catch {
+      return false;
+    } finally {
+      clearTimeout(timer);
+    }
+  };
   const [robotsRes, sitemapRes] = await Promise.allSettled([
-    fetch(new URL("/robots.txt", origin).toString(), { headers: BROWSER_HEADERS }),
-    fetch(new URL("/sitemap.xml", origin).toString(), { headers: BROWSER_HEADERS }),
+    probe("/robots.txt"),
+    probe("/sitemap.xml"),
   ]);
-  const hasRobots = robotsRes.status === "fulfilled" && robotsRes.value.ok;
-  const hasSitemap = sitemapRes.status === "fulfilled" && sitemapRes.value.ok;
+  const hasRobots = robotsRes.status === "fulfilled" && robotsRes.value;
+  const hasSitemap = sitemapRes.status === "fulfilled" && sitemapRes.value;
+  logStep(b, "checking-seo", "robots.txt + sitemap.xml", tProbe, { hasRobots, hasSitemap });
+
 
   const body = findElements(html, "body")[0]?.inner ?? html;
   const textSample = compactText(body).slice(0, 5000);
@@ -687,11 +737,14 @@ export async function crawlSite(rawUrl: string): Promise<Extracted> {
 
 const PSI_CACHE_TTL_MS = 10 * 60 * 1000;
 const psiCache = new Map<string, { at: number; value: LighthouseSummary }>();
-const RETRY_DELAYS_MS = [2000, 5000, 10000];
+/** Only temporary failures are retried (429 / 5xx / network); never permanent 4xx. */
+const RETRY_DELAYS_MS = [1500, 4000];
+const PSI_REQUEST_TIMEOUT_MS = 35000;
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
-export async function runLighthouse(url: string): Promise<LighthouseSummary> {
+export async function runLighthouse(url: string, budget?: Budget): Promise<LighthouseSummary> {
+  const b = budget ?? createBudget(url);
   const apiKey =
     process.env["PAGESPEED_API_KEY"] || process.env["GOOGLE_PAGESPEED_API_KEY"] || "";
   const cacheKey = `mobile:${url}`;
@@ -711,12 +764,23 @@ export async function runLighthouse(url: string): Promise<LighthouseSummary> {
   let lastError = "PageSpeed request failed";
 
   for (let attempt = 0; attempt <= RETRY_DELAYS_MS.length; attempt++) {
-    if (attempt > 0) await sleep(RETRY_DELAYS_MS[attempt - 1]);
+    if (attempt > 0) {
+      if (remaining(b) < 20000) {
+        return empty(`${lastError} (audit time budget reached)`, attempt, Boolean(apiKey));
+      }
+      await sleep(RETRY_DELAYS_MS[attempt - 1]);
+    }
 
+    const started = Date.now();
     const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), 55000);
+    const perAttempt = Math.min(PSI_REQUEST_TIMEOUT_MS, Math.max(5000, remaining(b) - 15000));
+    const timeout = setTimeout(() => controller.abort(), perAttempt);
     try {
       const res = await fetch(endpoint, { signal: controller.signal });
+      logStep(b, "checking-performance", "PageSpeed Insights", started, {
+        status: res.status,
+        attempt: attempt + 1,
+      });
       if (res.status === 429 || res.status >= 500) {
         lastError =
           res.status === 429
@@ -730,6 +794,7 @@ export async function runLighthouse(url: string): Promise<LighthouseSummary> {
         const detail = await res.text().catch(() => "");
         return empty(`PageSpeed API returned ${res.status}${detail ? `: ${detail.slice(0, 200)}` : ""}`, attempt, Boolean(apiKey));
       }
+
 
       const data: any = await res.json();
       const cats = data.lighthouseResult?.categories ?? {};
@@ -758,12 +823,18 @@ export async function runLighthouse(url: string): Promise<LighthouseSummary> {
       psiCache.set(cacheKey, { at: Date.now(), value });
       return value;
     } catch (e) {
-      lastError =
-        e instanceof Error && e.name === "AbortError"
-          ? "PageSpeed request timed out"
-          : e instanceof Error
-            ? e.message
-            : String(e);
+      const aborted = e instanceof Error && (e.name === "AbortError" || e.name === "TimeoutError");
+      lastError = aborted
+        ? "PageSpeed request timed out"
+        : e instanceof Error
+          ? e.message
+          : String(e);
+      logStep(b, "checking-performance", "PageSpeed Insights", started, {
+        attempt: attempt + 1,
+        error: lastError,
+      });
+      // Timeouts burn the remaining budget; retry only fast transient failures.
+      if (aborted) return empty(lastError, attempt + 1, Boolean(apiKey));
     } finally {
       clearTimeout(timeout);
     }
