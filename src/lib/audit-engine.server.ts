@@ -76,6 +76,14 @@ export function normalizeUrl(input: string): string {
   }
   const host = parsed.hostname.toLowerCase();
   const isIp = /^\d{1,3}(\.\d{1,3}){3}$/.test(host);
+  if (
+    host === "localhost" ||
+    host.endsWith(".local") ||
+    /^(127\.|10\.|192\.168\.|169\.254\.|0\.)/.test(host) ||
+    /^172\.(1[6-9]|2\d|3[01])\./.test(host)
+  ) {
+    throw new InvalidUrlError("Private and local addresses cannot be audited — use a public website URL.");
+  }
   if (!isIp && (!host.includes(".") || host.startsWith(".") || host.endsWith("."))) {
     throw new InvalidUrlError(`"${raw}" is not a valid website URL — a domain like example.com is required.`);
   }
@@ -731,7 +739,7 @@ const PSI_CACHE_TTL_MS = 10 * 60 * 1000;
 const psiCache = new Map<string, { at: number; value: LighthouseSummary }>();
 /** Only temporary failures are retried (429 / 5xx / network); never permanent 4xx. */
 const RETRY_DELAYS_MS = [1500, 4000];
-const PSI_REQUEST_TIMEOUT_MS = 30000;
+const PSI_REQUEST_TIMEOUT_MS = 45000;
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
@@ -815,12 +823,18 @@ export async function runLighthouse(url: string, budget?: Budget): Promise<Light
       psiCache.set(cacheKey, { at: Date.now(), value });
       return value;
     } catch (e) {
-      lastError =
-        e instanceof Error && e.name === "AbortError"
-          ? "PageSpeed request timed out"
-          : e instanceof Error
-            ? e.message
-            : String(e);
+      const aborted = e instanceof Error && (e.name === "AbortError" || e.name === "TimeoutError");
+      lastError = aborted
+        ? "PageSpeed request timed out"
+        : e instanceof Error
+          ? e.message
+          : String(e);
+      logStep(b, "checking-performance", "PageSpeed Insights", started, {
+        attempt: attempt + 1,
+        error: lastError,
+      });
+      // Timeouts burn the remaining budget; retry only fast transient failures.
+      if (aborted) return empty(lastError, attempt + 1, Boolean(apiKey));
     } finally {
       clearTimeout(timeout);
     }
