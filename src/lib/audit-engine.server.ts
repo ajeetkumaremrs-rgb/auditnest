@@ -918,14 +918,7 @@ function conversionScore(e: Extracted): { value: number | null; inputs: string[]
   return { value: clamp(v), inputs };
 }
 
-export function computeOverallScore(
-  extracted: Extracted,
-  lighthouse: LighthouseSummary,
-): { score: number | null; basis: string; breakdown: ScoreComponent[] } {
-  const estimatePrefix = extracted.partial ? "captured metadata" : "crawled HTML";
-  const ux = uxScore(extracted);
-  const cta = ctaScore(extracted);
-  const conv = conversionScore(extracted);
+
 
   const unavailable = (reason: string) => `Unavailable — ${reason}`;
   const bodyReason = extracted.blocked
