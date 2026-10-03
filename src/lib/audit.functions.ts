@@ -208,7 +208,7 @@ export const listAudits = createServerFn({ method: "GET" })
   .handler(async ({ context }) => {
     const { data, error } = await context.supabase
       .from("audits")
-      .select("id,url,status,created_at,report")
+      .select("*")
       .order("created_at", { ascending: false })
       .limit(50);
     if (error) throw new Error(error.message);
@@ -217,6 +217,14 @@ export const listAudits = createServerFn({ method: "GET" })
       url: row.url as string,
       status: row.status as string,
       created_at: row.created_at as string,
+      stage: (row.stage ?? null) as string | null,
+      error: (row.error ?? null) as string | null,
+      events: (Array.isArray(row.events) ? row.events : []) as {
+        at: number;
+        stage: string;
+        level: "info" | "warn" | "error";
+        message: string;
+      }[],
       overallScore:
         row.report && typeof row.report === "object"
           ? ((row.report as any).overallScore ?? null)
