@@ -146,6 +146,7 @@ export const runAudit = createServerFn({ method: "POST" })
       });
 
       // Step 6-7 — analysis + report, capped by whatever time is left.
+      await track("report", "Analyzing results and writing the AI report");
       const aiBudget = Math.max(8000, remaining(budget) - 5000);
       let report: AuditReport;
       try {
@@ -169,14 +170,22 @@ export const runAudit = createServerFn({ method: "POST" })
         elapsedMs: Date.now() - startedAt,
       });
 
+      events.push({
+        at: Date.now() - startedAt,
+        stage: "complete",
+        level: "info",
+        message: `Report ready — score ${report.overallScore ?? "unavailable"}`,
+      });
       const { error: updErr } = await supabase
         .from("audits")
         .update({
           status: "complete",
+          stage: "complete",
+          events,
           extracted: extracted as any,
           lighthouse: lighthouse as any,
           report: report as any,
-        })
+        } as any)
         .eq("id", auditId);
       if (updErr) throw new Error(updErr.message);
       console.info("[audit] completed", { auditId, elapsedMs: Date.now() - startedAt });
@@ -184,7 +193,11 @@ export const runAudit = createServerFn({ method: "POST" })
     } catch (e) {
       const message = e instanceof Error ? e.message : String(e);
       console.error("[audit] failed", { auditId, url, message, elapsedMs: Date.now() - startedAt });
-      await supabase.from("audits").update({ status: "failed", error: message }).eq("id", auditId);
+      events.push({ at: Date.now() - startedAt, stage: "failed", level: "error", message });
+      await supabase
+        .from("audits")
+        .update({ status: "failed", stage: "failed", events, error: message } as any)
+        .eq("id", auditId);
       throw new Error(message);
     }
   });
