@@ -18,10 +18,12 @@ export type Database = {
         Row: {
           created_at: string
           error: string | null
+          events: Json
           extracted: Json | null
           id: string
           lighthouse: Json | null
           report: Json | null
+          stage: string | null
           status: string
           updated_at: string
           url: string
@@ -30,10 +32,12 @@ export type Database = {
         Insert: {
           created_at?: string
           error?: string | null
+          events?: Json
           extracted?: Json | null
           id?: string
           lighthouse?: Json | null
           report?: Json | null
+          stage?: string | null
           status?: string
           updated_at?: string
           url: string
@@ -42,10 +46,12 @@ export type Database = {
         Update: {
           created_at?: string
           error?: string | null
+          events?: Json
           extracted?: Json | null
           id?: string
           lighthouse?: Json | null
           report?: Json | null
+          stage?: string | null
           status?: string
           updated_at?: string
           url?: string
