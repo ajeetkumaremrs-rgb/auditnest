@@ -55,12 +55,53 @@ export const runAudit = createServerFn({ method: "POST" })
     }
     const auditId = inserted.id;
 
+    // Live progress: each step is appended to the row so the dashboard can stream it.
+    const events: { at: number; stage: string; level: "info" | "warn" | "error"; message: string }[] = [];
+    const track = async (stage: string, message: string, level: "info" | "warn" | "error" = "info") => {
+      events.push({ at: Date.now() - startedAt, stage, level, message });
+      const { error } = await supabase
+        .from("audits")
+        .update({ stage, events } as any)
+        .eq("id", auditId);
+      if (error) console.warn("[audit] progress update failed", error.message);
+    };
+
     try {
+      await track("validating", `URL validated: ${url}`);
+      await track("collecting", "Fetching website and running PageSpeed in parallel");
       // Steps 2-5 — crawl and PageSpeed run concurrently; each is independently
       // time-boxed so one slow or failing component never blocks the other.
       const [crawlResult, lighthouseResult] = await Promise.allSettled([
-        withTimeout(crawlSite(url, budget), COLLECTION_TIMEOUT_MS, "Website fetch"),
-        withTimeout(runLighthouse(url, budget), COLLECTION_TIMEOUT_MS, "PageSpeed check"),
+        withTimeout(crawlSite(url, budget), COLLECTION_TIMEOUT_MS, "Website fetch").then(
+          async (v) => {
+            await track(
+              "seo",
+              v.blocked
+                ? `Website blocked the crawler (${v.blockReason ?? `HTTP ${v.statusCode}`})`
+                : `Website fetched (HTTP ${v.statusCode}, ${v.wordCount} words, ${v.renderMode})`,
+              v.blocked ? "warn" : "info",
+            );
+            return v;
+          },
+          async (e) => {
+            await track("seo", `Website fetch failed: ${e instanceof Error ? e.message : String(e)}`, "error");
+            throw e;
+          },
+        ),
+        withTimeout(runLighthouse(url, budget), COLLECTION_TIMEOUT_MS, "PageSpeed check").then(
+          async (v) => {
+            await track(
+              "performance",
+              v.error ? `PageSpeed unavailable: ${v.error}` : `PageSpeed done — performance ${v.performance ?? "n/a"}`,
+              v.error ? "warn" : "info",
+            );
+            return v;
+          },
+          async (e) => {
+            await track("performance", `PageSpeed failed: ${e instanceof Error ? e.message : String(e)}`, "error");
+            throw e;
+          },
+        ),
       ]);
 
       if (crawlResult.status === "rejected") {
@@ -105,6 +146,7 @@ export const runAudit = createServerFn({ method: "POST" })
       });
 
       // Step 6-7 — analysis + report, capped by whatever time is left.
+      await track("report", "Analyzing results and writing the AI report");
       const aiBudget = Math.max(8000, remaining(budget) - 5000);
       let report: AuditReport;
       try {
@@ -128,14 +170,22 @@ export const runAudit = createServerFn({ method: "POST" })
         elapsedMs: Date.now() - startedAt,
       });
 
+      events.push({
+        at: Date.now() - startedAt,
+        stage: "complete",
+        level: "info",
+        message: `Report ready — score ${report.overallScore ?? "unavailable"}`,
+      });
       const { error: updErr } = await supabase
         .from("audits")
         .update({
           status: "complete",
+          stage: "complete",
+          events,
           extracted: extracted as any,
           lighthouse: lighthouse as any,
           report: report as any,
-        })
+        } as any)
         .eq("id", auditId);
       if (updErr) throw new Error(updErr.message);
       console.info("[audit] completed", { auditId, elapsedMs: Date.now() - startedAt });
@@ -143,7 +193,11 @@ export const runAudit = createServerFn({ method: "POST" })
     } catch (e) {
       const message = e instanceof Error ? e.message : String(e);
       console.error("[audit] failed", { auditId, url, message, elapsedMs: Date.now() - startedAt });
-      await supabase.from("audits").update({ status: "failed", error: message }).eq("id", auditId);
+      events.push({ at: Date.now() - startedAt, stage: "failed", level: "error", message });
+      await supabase
+        .from("audits")
+        .update({ status: "failed", stage: "failed", events, error: message } as any)
+        .eq("id", auditId);
       throw new Error(message);
     }
   });
@@ -154,7 +208,7 @@ export const listAudits = createServerFn({ method: "GET" })
   .handler(async ({ context }) => {
     const { data, error } = await context.supabase
       .from("audits")
-      .select("id,url,status,created_at,report")
+      .select("*")
       .order("created_at", { ascending: false })
       .limit(50);
     if (error) throw new Error(error.message);
@@ -163,6 +217,14 @@ export const listAudits = createServerFn({ method: "GET" })
       url: row.url as string,
       status: row.status as string,
       created_at: row.created_at as string,
+      stage: (row.stage ?? null) as string | null,
+      error: (row.error ?? null) as string | null,
+      events: (Array.isArray(row.events) ? row.events : []) as {
+        at: number;
+        stage: string;
+        level: "info" | "warn" | "error";
+        message: string;
+      }[],
       overallScore:
         row.report && typeof row.report === "object"
           ? ((row.report as any).overallScore ?? null)
