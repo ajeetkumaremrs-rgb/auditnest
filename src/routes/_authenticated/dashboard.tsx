@@ -9,7 +9,7 @@ import { Input } from "@/components/ui/input";
 import { Card } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { toast } from "sonner";
-import { Sparkles, Loader2, ExternalLink, LogOut, Plus, Check } from "lucide-react";
+import { Sparkles, Loader2, ExternalLink, LogOut, Plus, Check, AlertTriangle } from "lucide-react";
 
 export const Route = createFileRoute("/_authenticated/dashboard")({
   head: () => ({
@@ -37,6 +37,32 @@ function Dashboard() {
     queryKey: ["audits"],
     queryFn: () => listFn(),
   });
+
+  // Realtime: any insert/update on the user's audits refreshes the live view.
+  useEffect(() => {
+    const channel = supabase
+      .channel("audits-live")
+      .on("postgres_changes", { event: "*", schema: "public", table: "audits" }, () => {
+        qc.invalidateQueries({ queryKey: ["audits"] });
+      })
+      .subscribe();
+    // Polling fallback while something is running, in case realtime is unavailable.
+    const t = setInterval(() => {
+      const list = qc.getQueryData<any[]>(["audits"]);
+      if (list?.some((a) => a.status === "pending")) qc.invalidateQueries({ queryKey: ["audits"] });
+    }, 4000);
+    return () => {
+      clearInterval(t);
+      supabase.removeChannel(channel);
+    };
+  }, [qc]);
+
+  const live = (audits ?? []).filter(
+    (a) => a.status === "pending" && Date.now() - new Date(a.created_at).getTime() < 3 * 60_000,
+  );
+  const recentFinished = (audits ?? [])
+    .filter((a) => a.status !== "pending" && Date.now() - new Date(a.created_at).getTime() < 10 * 60_000)
+    .slice(0, 3);
 
   const mutation = useMutation({
     mutationFn: (u: string) => runFn({ data: { url: u } }),
@@ -98,9 +124,26 @@ function Dashboard() {
               {mutation.isPending ? <><Loader2 className="h-4 w-4 animate-spin" /> Auditing…</> : <><Plus className="h-4 w-4" /> Run audit</>}
             </Button>
           </form>
-          {mutation.isPending && <AuditProgress />}
+          {mutation.isPending && live.length === 0 && <AuditProgress />}
 
         </Card>
+
+        {(live.length > 0 || recentFinished.length > 0) && (
+          <section className="mb-10">
+            <div className="mb-4 flex items-center gap-2">
+              <span className="relative flex h-2.5 w-2.5">
+                <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-primary/60" />
+                <span className="relative inline-flex h-2.5 w-2.5 rounded-full bg-primary" />
+              </span>
+              <h2 className="text-xl font-semibold">Live audits</h2>
+            </div>
+            <div className="grid gap-3 md:grid-cols-2">
+              {[...live, ...recentFinished].map((a) => (
+                <LiveAuditCard key={a.id} audit={a} />
+              ))}
+            </div>
+          </section>
+        )}
 
         <div className="mb-4 flex items-baseline justify-between">
           <h2 className="text-xl font-semibold">Recent audits</h2>
@@ -183,6 +226,102 @@ function AuditProgress() {
   );
 }
 
+
+const LIVE_STAGES = [
+  { key: "validating", label: "Validating URL" },
+  { key: "collecting", label: "Fetching website & PageSpeed" },
+  { key: "seo", label: "Checking SEO & accessibility" },
+  { key: "performance", label: "Checking performance" },
+  { key: "report", label: "Generating report" },
+  { key: "complete", label: "Complete" },
+];
+
+type LiveAudit = {
+  id: string;
+  url: string;
+  status: string;
+  created_at: string;
+  stage: string | null;
+  error: string | null;
+  overallScore: number | null;
+  events: { at: number; stage: string; level: "info" | "warn" | "error"; message: string }[];
+};
+
+function LiveAuditCard({ audit }: { audit: LiveAudit }) {
+  const [now, setNow] = useState(() => Date.now());
+  const running = audit.status === "pending";
+  useEffect(() => {
+    if (!running) return;
+    const t = setInterval(() => setNow(Date.now()), 1000);
+    return () => clearInterval(t);
+  }, [running]);
+  const elapsed = Math.max(0, Math.round((now - new Date(audit.created_at).getTime()) / 1000));
+  const seen = new Set(audit.events.map((e) => e.stage));
+  const errored = new Set(audit.events.filter((e) => e.level !== "info").map((e) => e.stage));
+
+  return (
+    <Card className="p-4 min-w-0">
+      <div className="flex items-start justify-between gap-3 mb-3">
+        <div className="min-w-0">
+          <div className="font-medium break-words">{audit.url}</div>
+          <div className="text-xs text-muted-foreground">
+            {running ? `Running · ${elapsed}s` : `Finished · ${new Date(audit.created_at).toLocaleTimeString()}`}
+          </div>
+        </div>
+        <div className="flex items-center gap-2 shrink-0">
+          {typeof audit.overallScore === "number" && <ScorePill value={audit.overallScore} />}
+          <StatusBadge status={audit.status} />
+        </div>
+      </div>
+
+      <ol className="space-y-1.5 mb-3">
+        {LIVE_STAGES.map((s) => {
+          const done = seen.has(s.key) || audit.status === "complete";
+          const isCurrent = running && audit.stage === s.key;
+          const warn = errored.has(s.key);
+          return (
+            <li key={s.key} className="flex items-center gap-2 text-sm">
+              {isCurrent ? (
+                <Loader2 className="h-4 w-4 animate-spin text-primary" />
+              ) : warn ? (
+                <AlertTriangle className="h-4 w-4 text-warning-foreground" />
+              ) : done ? (
+                <Check className="h-4 w-4 text-success" />
+              ) : (
+                <div className="h-4 w-4 rounded-full border border-muted-foreground/40" />
+              )}
+              <span className={done || isCurrent ? "" : "text-muted-foreground"}>{s.label}</span>
+            </li>
+          );
+        })}
+      </ol>
+
+      {audit.events.length > 0 && (
+        <div className="rounded-md bg-muted/60 p-2 max-h-40 overflow-y-auto space-y-1 font-mono text-[11px]">
+          {audit.events.map((e, i) => (
+            <div
+              key={i}
+              className={`break-words ${
+                e.level === "error" ? "text-destructive" : e.level === "warn" ? "text-warning-foreground" : "text-muted-foreground"
+              }`}
+            >
+              <span className="opacity-60">{(e.at / 1000).toFixed(1)}s</span> {e.message}
+            </div>
+          ))}
+        </div>
+      )}
+
+      {audit.status === "failed" && audit.error && (
+        <p className="mt-2 text-sm text-destructive break-words">{audit.error}</p>
+      )}
+      {audit.status === "complete" && (
+        <Link to="/audit/$id" params={{ id: audit.id }} className="mt-3 inline-flex text-sm font-medium text-primary">
+          View full report →
+        </Link>
+      )}
+    </Card>
+  );
+}
 
 function StatusBadge({ status }: { status: string }) {
   const map: Record<string, { label: string; className: string }> = {
