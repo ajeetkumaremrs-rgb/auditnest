@@ -1,6 +1,6 @@
 import { generateText } from "ai";
 
-import type { AuditReport, Extracted, LighthouseSummary, Priority } from "./audit-shared";
+import type { AuditReport, Extracted, LighthouseSummary, Priority, ScoreSource } from "./audit-shared";
 import { createLovableAiGatewayProvider } from "./ai-gateway.server";
 import { computeOverallScore } from "./audit-engine.server";
 
@@ -173,8 +173,9 @@ function blockedReport(extracted: Extracted, lighthouse: LighthouseSummary): Aud
       accessibilityScore: lighthouse.accessibility,
       seoScore: lighthouse.seo,
       bestPracticesScore: lighthouse.bestPractices,
+      sources: scoreSources(extracted, lighthouse),
       notes: lighthouseOk
-        ? "These scores come from Google PageSpeed Insights (Lighthouse), which loads the page in a real browser, so they are unaffected by the crawler being blocked."
+        ? "These scores come from Google PageSpeed Insights (Lighthouse), which loads the page in its own browser. The same bot protection may also affect Lighthouse, so treat them with care if they look unusually high or low."
         : lighthouse.error ?? "Lighthouse data unavailable for a blocked page.",
     },
     conversion: [],
@@ -217,6 +218,7 @@ export function dataOnlyReport(
       accessibilityScore: lighthouse.accessibility ?? extracted.htmlEstimate.accessibility,
       seoScore: lighthouse.seo ?? extracted.htmlEstimate.seo,
       bestPracticesScore: lighthouse.bestPractices ?? extracted.htmlEstimate.bestPractices,
+      sources: scoreSources(extracted, lighthouse),
       notes: lighthouse.error ?? "Measured by Google PageSpeed Insights (Lighthouse).",
     },
     conversion: [],
@@ -350,6 +352,7 @@ Do not output any numeric score — scores are computed separately from measured
       accessibilityScore: lighthouse.accessibility ?? extracted.htmlEstimate.accessibility,
       seoScore: lighthouse.seo ?? extracted.htmlEstimate.seo,
       bestPracticesScore: lighthouse.bestPractices ?? extracted.htmlEstimate.bestPractices,
+      sources: scoreSources(extracted, lighthouse),
       notes: ai.performanceNotes,
     },
     conversion: ai.conversion,

@@ -2,7 +2,15 @@ export interface HtmlEstimate {
   seo: number | null;
   accessibility: number | null;
   bestPractices: number | null;
+  /** True when body-level checks were skipped because only metadata was captured. */
+  reduced?: boolean;
 }
+
+/** How the analysed page body was captured. */
+export type CaptureMode = "static" | "rendered-html" | "rendered-markdown";
+
+/** Where a displayed category score came from. */
+export type ScoreSource = "lighthouse" | "html-estimate" | null;
 
 export interface Extracted {
   finalUrl: string;
@@ -23,6 +31,8 @@ export interface Extracted {
   captureWarning: string | null;
   /** "static" = plain fetch, "rendered" = fetched through a JS-rendering proxy. */
   renderMode: "static" | "rendered";
+  /** Finer-grained capture method; older audits omit it. */
+  captureMode?: CaptureMode;
   title: string | null;
   metaDescription: string | null;
   canonical: string | null;
@@ -142,6 +152,8 @@ export interface AuditReport {
     accessibilityScore: number | null;
     seoScore: number | null;
     bestPracticesScore: number | null;
+    /** Provenance of each category score; older audits omit it. */
+    sources?: { accessibility: ScoreSource; seo: ScoreSource; bestPractices: ScoreSource };
     notes: string;
   };
   conversion: string[];

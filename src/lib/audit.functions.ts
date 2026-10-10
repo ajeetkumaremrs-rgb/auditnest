@@ -132,6 +132,14 @@ export const runAudit = createServerFn({ method: "POST" })
               apiKeyUsed: false,
             };
 
+      // Coverage is only known once Lighthouse has actually finished.
+      if (extracted.dataCoverage) {
+        const lhValues = [lighthouse.performance, lighthouse.accessibility, lighthouse.seo, lighthouse.bestPractices];
+        const got = lhValues.filter((v) => typeof v === "number").length;
+        extracted.dataCoverage.lighthouse =
+          got === 4 ? "complete" : got > 0 ? "partial" : "unavailable";
+      }
+
       console.info("[audit] collection complete", {
         auditId,
         url,
