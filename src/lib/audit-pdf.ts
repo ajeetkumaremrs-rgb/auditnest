@@ -511,6 +511,23 @@ function buildBlocks(doc: Doc, input: PdfInput): Block[] {
       ),
     );
     b.push(labelValueGrid(doc, lighthouseMetricRows(lighthouse), 3));
+    if (report.performance.sources && Object.values(report.performance.sources).includes("html-estimate")) {
+      b.push(
+        para(
+          doc,
+          "Some Lighthouse categories were unavailable. Their scores in the overall calculation use an HTML estimate instead — see Score calculation.",
+          { color: SOFT, size: 9.2 },
+        ),
+      );
+    }
+    if (extracted?.captureMode === "rendered-markdown") {
+      b.push(
+        para(doc, "Page content was captured as text only, so button, form and image checks were skipped rather than penalised.", {
+          color: SOFT,
+          size: 9.2,
+        }),
+      );
+    }
     if (report.performance.notes) b.push(para(doc, report.performance.notes, { color: SOFT, size: 9.8 }));
   }
 

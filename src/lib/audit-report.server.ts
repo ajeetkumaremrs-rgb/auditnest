@@ -1,6 +1,6 @@
 import { generateText } from "ai";
 
-import type { AuditReport, Extracted, LighthouseSummary, Priority } from "./audit-shared";
+import type { AuditReport, Extracted, LighthouseSummary, Priority, ScoreSource } from "./audit-shared";
 import { createLovableAiGatewayProvider } from "./ai-gateway.server";
 import { computeOverallScore } from "./audit-engine.server";
 
@@ -111,6 +111,17 @@ function normalizeAi(raw: unknown): AiReport {
 
 
 
+/** Records whether each category score is Lighthouse-measured or an HTML estimate. */
+function scoreSources(extracted: Extracted, lighthouse: LighthouseSummary) {
+  const pick = (lh: number | null, est: number | null): ScoreSource =>
+    lh != null ? "lighthouse" : !extracted.blocked && est != null ? "html-estimate" : null;
+  return {
+    accessibility: pick(lighthouse.accessibility, extracted.htmlEstimate.accessibility),
+    seo: pick(lighthouse.seo, extracted.htmlEstimate.seo),
+    bestPractices: pick(lighthouse.bestPractices, extracted.htmlEstimate.bestPractices),
+  };
+}
+
 function buildWarnings(extracted: Extracted, lighthouse: LighthouseSummary): string[] {
   const warnings: string[] = [];
   if (extracted.blocked) {
@@ -173,8 +184,9 @@ function blockedReport(extracted: Extracted, lighthouse: LighthouseSummary): Aud
       accessibilityScore: lighthouse.accessibility,
       seoScore: lighthouse.seo,
       bestPracticesScore: lighthouse.bestPractices,
+      sources: scoreSources(extracted, lighthouse),
       notes: lighthouseOk
-        ? "These scores come from Google PageSpeed Insights (Lighthouse), which loads the page in a real browser, so they are unaffected by the crawler being blocked."
+        ? "These scores come from Google PageSpeed Insights (Lighthouse), which loads the page in its own browser. The same bot protection may also affect Lighthouse, so treat them with care if they look unusually high or low."
         : lighthouse.error ?? "Lighthouse data unavailable for a blocked page.",
     },
     conversion: [],
@@ -217,6 +229,7 @@ export function dataOnlyReport(
       accessibilityScore: lighthouse.accessibility ?? extracted.htmlEstimate.accessibility,
       seoScore: lighthouse.seo ?? extracted.htmlEstimate.seo,
       bestPracticesScore: lighthouse.bestPractices ?? extracted.htmlEstimate.bestPractices,
+      sources: scoreSources(extracted, lighthouse),
       notes: lighthouse.error ?? "Measured by Google PageSpeed Insights (Lighthouse).",
     },
     conversion: [],
@@ -350,6 +363,7 @@ Do not output any numeric score — scores are computed separately from measured
       accessibilityScore: lighthouse.accessibility ?? extracted.htmlEstimate.accessibility,
       seoScore: lighthouse.seo ?? extracted.htmlEstimate.seo,
       bestPracticesScore: lighthouse.bestPractices ?? extracted.htmlEstimate.bestPractices,
+      sources: scoreSources(extracted, lighthouse),
       notes: ai.performanceNotes,
     },
     conversion: ai.conversion,

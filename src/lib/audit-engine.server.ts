@@ -1,4 +1,4 @@
-import type { Extracted, HtmlEstimate, LighthouseSummary, ScoreComponent } from "./audit-shared";
+import type { CaptureMode, Extracted, HtmlEstimate, LighthouseSummary, ScoreComponent } from "./audit-shared";
 
 const UA =
   "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36";
@@ -76,14 +76,6 @@ export function normalizeUrl(input: string): string {
   }
   const host = parsed.hostname.toLowerCase();
   const isIp = /^\d{1,3}(\.\d{1,3}){3}$/.test(host);
-  if (
-    host === "localhost" ||
-    host.endsWith(".local") ||
-    /^(127\.|10\.|192\.168\.|169\.254\.|0\.)/.test(host) ||
-    /^172\.(1[6-9]|2\d|3[01])\./.test(host)
-  ) {
-    throw new InvalidUrlError("Private and local addresses cannot be audited — use a public website URL.");
-  }
   if (!isIp && (!host.includes(".") || host.startsWith(".") || host.endsWith("."))) {
     throw new InvalidUrlError(`"${raw}" is not a valid website URL — a domain like example.com is required.`);
   }
@@ -386,23 +378,31 @@ async function renderOnce(
  * concurrently (instead of sequential retries) and the run is capped by the
  * remaining audit budget, so rendering can never stall the whole audit.
  */
-async function fetchRendered(budget: Budget, url: string): Promise<string | null> {
+type RenderResult = { html: string; mode: "html" | "markdown" };
+
+async function fetchRendered(budget: Budget, url: string): Promise<RenderResult | null> {
   const startedAt = Date.now();
   const budgetMs = Math.min(RENDER_TIMEOUT_MS, remaining(budget) - 12000);
   if (budgetMs < 4000) {
     logStep(budget, "render", "r.jina.ai", startedAt, { skipped: "insufficient time budget" });
     return null;
   }
-  const results = await Promise.allSettled([
+  const [htmlRes, mdRes] = await Promise.allSettled([
     renderOnce(url, 0, "html", budgetMs),
     renderOnce(url, 1500, "markdown", budgetMs),
   ]);
-  const candidates = results
-    .map((r) => (r.status === "fulfilled" ? r.value : null))
-    .filter((v): v is string => Boolean(v))
-    .sort((a, b) => bodyTextLength(b) - bodyTextLength(a));
-  logStep(budget, "render", "r.jina.ai", startedAt, { ok: candidates.length > 0 });
-  return candidates[0] ?? null;
+  const htmlDoc = htmlRes.status === "fulfilled" ? htmlRes.value : null;
+  const mdDoc = mdRes.status === "fulfilled" ? mdRes.value : null;
+  // Prefer the real DOM: markdown loses buttons, forms and images. Only use
+  // markdown when the HTML capture is missing or far shorter.
+  let chosen: RenderResult | null = null;
+  if (htmlDoc && (!mdDoc || bodyTextLength(htmlDoc) >= bodyTextLength(mdDoc) * 0.5)) {
+    chosen = { html: htmlDoc, mode: "html" };
+  } else if (mdDoc) {
+    chosen = { html: mdDoc, mode: "markdown" };
+  }
+  logStep(budget, "render", "r.jina.ai", startedAt, { ok: Boolean(chosen), mode: chosen?.mode });
+  return chosen;
 }
 
 
@@ -467,6 +467,7 @@ function estimateFromHtml(e: Omit<Extracted, "htmlEstimate">): HtmlEstimate {
     seo: clamp(seo),
     accessibility: clamp(accessibility),
     bestPractices: clamp(bestPractices),
+    reduced: e.partial,
   };
 }
 
@@ -485,6 +486,7 @@ export async function crawlSite(rawUrl: string, budget?: Budget): Promise<Extrac
     bytes: html.length,
   });
   let renderMode: "static" | "rendered" = "static";
+  let captureMode: CaptureMode = "static";
   let blockReason = detectChallenge(res.status, html);
 
   // Pass 2: retry as a well-known search crawler (many WAFs allow-list these).
@@ -506,7 +508,7 @@ export async function crawlSite(rawUrl: string, budget?: Budget): Promise<Extrac
   }
 
   // Rendering is attempted at most once per audit.
-  let renderedOnce: string | null | undefined;
+  let renderedOnce: RenderResult | null | undefined;
   const renderCached = async () => {
     if (renderedOnce === undefined) renderedOnce = await fetchRendered(b, url);
     return renderedOnce;
@@ -517,10 +519,11 @@ export async function crawlSite(rawUrl: string, budget?: Budget): Promise<Extrac
   if (blockReason) {
     const rendered = await renderCached();
     if (rendered) {
-      const renderedBlock = detectChallenge(200, rendered);
+      const renderedBlock = detectChallenge(200, rendered.html);
       if (!renderedBlock) {
-        html = rendered;
+        html = rendered.html;
         renderMode = "rendered";
+        captureMode = rendered.mode === "html" ? "rendered-html" : "rendered-markdown";
         blockReason = null;
       }
     } else {
@@ -536,9 +539,10 @@ export async function crawlSite(rawUrl: string, budget?: Budget): Promise<Extrac
   // Always render such pages so UX / CTA / conversion analysis sees the real DOM.
   if (!blockReason && bodyTextLength(html) < 600) {
     const rendered = await renderCached();
-    if (rendered && bodyTextLength(rendered) > bodyTextLength(html)) {
-      html = rendered;
+    if (rendered && bodyTextLength(rendered.html) > bodyTextLength(html)) {
+      html = rendered.html;
       renderMode = "rendered";
+      captureMode = rendered.mode === "html" ? "rendered-html" : "rendered-markdown";
       renderFailed = false;
     } else {
       renderFailed = true;
@@ -701,6 +705,7 @@ export async function crawlSite(rawUrl: string, budget?: Budget): Promise<Extrac
     dataCoverage,
     captureWarning,
     renderMode,
+    captureMode,
 
     title,
     metaDescription:
@@ -877,9 +882,17 @@ function uxScore(e: Extracted): { value: number | null; inputs: string[] } {
   hit(e.wordCount < 300, 10, `word count (${e.wordCount})`);
   hit(e.navLinks.length < 3, 10, `nav links (${e.navLinks.length})`);
   hit(!e.hasViewport, 12, `responsive viewport (${e.hasViewport ? "present" : "missing"})`);
-  hit(e.buttons.length + e.ctas.length === 0, 10, `interactive elements (${e.buttons.length + e.ctas.length})`);
+  if (isTextCapture(e)) inputs.push(SKIPPED_STRUCTURAL("interactive elements"));
+  else hit(e.buttons.length + e.ctas.length === 0, 10, `interactive elements (${e.buttons.length + e.ctas.length})`);
   return { value: clamp(v), inputs };
 }
+
+/** Text-only (markdown) renders contain no <button>/<form>/<img> tags. */
+function isTextCapture(e: Extracted): boolean {
+  return e.captureMode === "rendered-markdown";
+}
+const SKIPPED_STRUCTURAL = (what: string) =>
+  `${what}: not checked (text-only render cannot see buttons, forms or images)`;
 
 const GENERIC_CTA = /^(click here|submit|learn more|read more|more|go|here)$/i;
 
@@ -895,7 +908,8 @@ function ctaScore(e: Extracted): { value: number | null; inputs: string[] } {
   const generic = e.ctas.filter((c) => GENERIC_CTA.test(c.trim())).length;
   hit(e.ctas.length === 0, 45, `detected CTAs (${e.ctas.length})`);
   hit(e.ctas.length === 1, 12, `CTA repetition (${e.ctas.length})`);
-  hit(e.forms.length === 0, 15, `forms on page (${e.forms.length})`);
+  if (isTextCapture(e)) inputs.push(SKIPPED_STRUCTURAL("forms on page"));
+  else hit(e.forms.length === 0, 15, `forms on page (${e.forms.length})`);
   hit(generic > 0, 10, `generic CTA wording (${generic})`);
   return { value: clamp(v), inputs };
 }
@@ -910,7 +924,8 @@ function conversionScore(e: Extracted): { value: number | null; inputs: string[]
     if (cond) v -= pts;
   };
   hit(e.ctas.length === 0, 25, `CTAs (${e.ctas.length})`);
-  hit(e.forms.length === 0, 20, `lead capture forms (${e.forms.length})`);
+  if (isTextCapture(e)) inputs.push(SKIPPED_STRUCTURAL("lead capture forms"));
+  else hit(e.forms.length === 0, 20, `lead capture forms (${e.forms.length})`);
   hit(e.structuredData.length === 0, 10, `structured data blocks (${e.structuredData.length})`);
   hit(!e.metaDescription, 5, `meta description (${e.metaDescription ? "present" : "missing"})`);
   hit(e.links.internal < 5, 10, `internal links (${e.links.internal})`);
@@ -977,8 +992,11 @@ export function computeOverallScore(
     if (lh != null) {
       breakdown.push(make(key, label, lh, weight, lhSource(label.toLowerCase()), [], "measured"));
     } else if (est != null) {
+      const reduced = extracted.htmlEstimate.reduced
+        ? " — reduced rule set: body-level checks skipped because the page body was not captured"
+        : "";
       breakdown.push(
-        make(key, label, est, weight, `Deterministic rules over ${estimatePrefix} (Lighthouse category unavailable)`, [], "derived"),
+        make(key, label, est, weight, `HTML estimate: deterministic rules over ${estimatePrefix} (Lighthouse category unavailable)${reduced}`, [], "derived"),
       );
     } else {
       breakdown.push(make(key, label, null, weight, unavailable("no signal collected"), [], "unavailable"));

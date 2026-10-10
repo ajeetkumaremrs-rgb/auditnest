@@ -339,6 +339,18 @@ function ReportView({
                 <Chip>{lighthouse.attempts} attempt{lighthouse.attempts === 1 ? "" : "s"}</Chip>
               )}
             </div>
+            {report.performance.sources &&
+              Object.values(report.performance.sources).includes("html-estimate") && (
+                <p className="mb-3 break-words text-xs text-muted-foreground">
+                  Some Lighthouse categories were unavailable. Their scores in the overall
+                  calculation use an HTML estimate instead — see "Score calculation" below.
+                </p>
+              )}
+            {extracted?.captureMode === "rendered-markdown" && (
+              <p className="mb-3 break-words text-xs text-muted-foreground">
+                Page content was captured as text only, so button, form and image checks were skipped rather than penalised.
+              </p>
+            )}
             <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
               <MiniScore label="Performance" score={lighthouse.performance} />
               <MiniScore label="Accessibility" score={lighthouse.accessibility} />
