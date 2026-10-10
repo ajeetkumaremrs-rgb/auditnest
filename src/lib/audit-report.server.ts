@@ -111,6 +111,17 @@ function normalizeAi(raw: unknown): AiReport {
 
 
 
+/** Records whether each category score is Lighthouse-measured or an HTML estimate. */
+function scoreSources(extracted: Extracted, lighthouse: LighthouseSummary) {
+  const pick = (lh: number | null, est: number | null): ScoreSource =>
+    lh != null ? "lighthouse" : !extracted.blocked && est != null ? "html-estimate" : null;
+  return {
+    accessibility: pick(lighthouse.accessibility, extracted.htmlEstimate.accessibility),
+    seo: pick(lighthouse.seo, extracted.htmlEstimate.seo),
+    bestPractices: pick(lighthouse.bestPractices, extracted.htmlEstimate.bestPractices),
+  };
+}
+
 function buildWarnings(extracted: Extracted, lighthouse: LighthouseSummary): string[] {
   const warnings: string[] = [];
   if (extracted.blocked) {
